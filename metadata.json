@@ -1,0 +1,6 @@
+{
+  "name": "Florishop Skate",
+  "description": "Loja de artigos para skate com catálogo de produtos, cálculo de frete, checkout com autenticação obrigatória de clientes, painel administrativo com login exclusivo para gestão de estoque, pedidos e cadastros, além de integração com Supabase (PostgreSQL) e migrations geradas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
