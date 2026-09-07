@@ -18,7 +18,17 @@ import {
   calculateMarginFromSalePrice,
   calculateUnitProfit
 } from '@/lib/skate-store';
-import { updateOrderInSupabase, deleteOrderFromSupabase } from '@/lib/supabase-service';
+import {
+  updateOrderInSupabase,
+  deleteOrderFromSupabase,
+  createOrderInSupabase,
+  upsertProductInSupabase,
+  deleteProductFromSupabase,
+  upsertUserInSupabase,
+  recordStockMovementInSupabase,
+  syncInitialDataToSupabaseIfEmpty,
+  fetchProductsFromSupabase
+} from '@/lib/supabase-service';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
 interface StoreContextType {
@@ -227,6 +237,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => cancelAnimationFrame(handle);
   }, []);
 
+  // Sincronização em segundo plano com o Supabase quando hidratado
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (isSupabaseConfigured()) {
+      syncInitialDataToSupabaseIfEmpty(products, users)
+        .then((res) => {
+          if (res.synced) {
+            console.log(`[Supabase] Sincronização inicial concluída: ${res.productCount} produtos enviados.`);
+          } else if (res.productCount > 0) {
+            // Se já existem produtos no Supabase, carrega os dados mais recentes da nuvem
+            fetchProductsFromSupabase().then((remoteProducts) => {
+              if (remoteProducts && remoteProducts.length > 0) {
+                setProducts(remoteProducts);
+              }
+            });
+          }
+        })
+        .catch((e) => console.warn('[Supabase] Erro ao sincronizar catálogo inicial:', e));
+    }
+  }, [isHydrated]);
+
   // Sync to localStorage
   useEffect(() => {
     if (!isHydrated) return;
@@ -371,6 +402,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setUsers((prev) => [newUser, ...prev]);
     setCurrentUser(newUser);
     closeAuthModal();
+
+    if (isSupabaseConfigured()) {
+      upsertUserInSupabase(newUser).catch((e) =>
+        console.warn('Erro ao sincronizar usuário com Supabase:', e)
+      );
+    }
+
     return { success: true };
   };
 
@@ -392,6 +430,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       status: userData.status || 'active',
     };
     setUsers((prev) => [newUser, ...prev]);
+
+    if (isSupabaseConfigured()) {
+      upsertUserInSupabase(newUser).catch((e) =>
+        console.warn('Erro ao salvar usuário no Supabase:', e)
+      );
+    }
   };
 
   const updateUserStatus = (userId: string, status: 'active' | 'blocked') => {
@@ -405,7 +449,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateUserProfile = (userId: string, data: Partial<User>) => {
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, ...data } : u))
+      prev.map((u) => {
+        if (u.id === userId) {
+          const updated = { ...u, ...data };
+          if (isSupabaseConfigured()) {
+            upsertUserInSupabase(updated).catch((e) =>
+              console.warn('Erro ao atualizar usuário no Supabase:', e)
+            );
+          }
+          return updated;
+        }
+        return u;
+      })
     );
     if (currentUser?.id === userId) {
       setCurrentUser((prev) => (prev ? { ...prev, ...data } : null));
@@ -421,6 +476,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Funções de Gestão de Pedidos (Admin)
   const updateOrder = (orderId: string, updatedData: Partial<Order>) => {
+    if (isSupabaseConfigured()) {
+      updateOrderInSupabase(orderId, updatedData).catch((e) =>
+        console.warn('Falha ao atualizar pedido no Supabase:', e)
+      );
+    }
+
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id !== orderId) return order;
@@ -871,6 +932,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setOrders((prevOrders) => [newOrder, ...prevOrders]);
     clearCart();
 
+    if (isSupabaseConfigured()) {
+      createOrderInSupabase(newOrder).catch((e) =>
+        console.warn('Falha ao salvar pedido no Supabase:', e)
+      );
+      for (const m of newMovements) {
+        recordStockMovementInSupabase(m).catch(() => {});
+      }
+    }
+
     return newOrder;
   };
 
@@ -880,6 +950,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: `prod-${Date.now()}`,
     };
     setProducts((prev) => [newProduct, ...prev]);
+
+    if (isSupabaseConfigured()) {
+      upsertProductInSupabase(newProduct).catch((e) =>
+        console.warn('Falha ao adicionar produto no Supabase:', e)
+      );
+    }
 
     if (newProduct.stockQuantity > 0) {
       setStockMovements((prev) => [
@@ -898,19 +974,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateProduct = (id: string, productData: Partial<Product>) => {
-    setProducts((prev) =>
-      prev.map((p) => {
+    setProducts((prev) => {
+      const updatedList = prev.map((p) => {
         if (p.id === id) {
           return { ...p, ...productData };
         }
         return p;
-      })
-    );
+      });
+      const target = updatedList.find((p) => p.id === id);
+      if (target && isSupabaseConfigured()) {
+        upsertProductInSupabase(target).catch((e) =>
+          console.warn('Falha ao atualizar produto no Supabase:', e)
+        );
+      }
+      return updatedList;
+    });
   };
 
   const deleteProduct = (id: string) => {
     const targetProduct = products.find((p) => p.id === id);
     setProducts((prev) => prev.filter((p) => p.id !== id));
+
+    if (isSupabaseConfigured()) {
+      deleteProductFromSupabase(id).catch((e) =>
+        console.warn('Falha ao excluir produto no Supabase:', e)
+      );
+    }
 
     if (targetProduct && targetProduct.stockQuantity > 0) {
       setStockMovements((prev) => [

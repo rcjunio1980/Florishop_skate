@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from './supabase';
+import { getSupabaseClient, isSupabaseConfigured, extractCleanSupabaseUrl } from './supabase';
 import { Product, Order, User, StockMovement, FeaturedMonthConfig } from './skate-store';
 
 export interface SupabaseHealthCheck {
@@ -22,7 +22,7 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
     return {
       isConfigured: false,
       connected: false,
-      error: 'Variáveis de ambiente NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_ANON_KEY não estão configuradas.',
+      error: 'Variáveis de ambiente do Supabase não encontradas ou inválidas.',
     };
   }
 
@@ -61,7 +61,7 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
     return {
       isConfigured: true,
       connected: hasAccess,
-      url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      url: extractCleanSupabaseUrl() || undefined,
       error: prodError ? prodError.message : undefined,
       tables: {
         products: !prodError,
@@ -83,6 +83,13 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
  * Mapeamento: Converte Produto da aplicação para formato do banco de dados
  */
 export function mapProductToRow(product: Product) {
+  let safeSpecs: string[] = [];
+  if (Array.isArray(product.specs)) {
+    safeSpecs = product.specs.map((s) => String(s));
+  } else if (product.specs && typeof product.specs === 'object') {
+    safeSpecs = Object.entries(product.specs).map(([k, v]) => `${k}: ${v}`);
+  }
+
   return {
     id: product.id,
     name: product.name,
@@ -93,12 +100,12 @@ export function mapProductToRow(product: Product) {
     profit_margin: product.profitMargin,
     sale_price: product.salePrice,
     stock_quantity: product.stockQuantity,
-    images: product.images,
-    specs: product.specs,
-    description: product.description,
+    images: Array.isArray(product.images) ? product.images : [],
+    specs: safeSpecs,
+    description: product.description || '',
     featured: product.featured ?? false,
     badge: product.badge || null,
-    sizes: product.sizes || [],
+    sizes: Array.isArray(product.sizes) ? product.sizes : [],
   };
 }
 
@@ -366,5 +373,55 @@ export async function upsertUserInSupabase(user: User): Promise<boolean> {
   } catch (e) {
     console.error('Exceção ao salvar usuário no Supabase:', e);
     return false;
+  }
+}
+
+/**
+ * Se o banco do Supabase estiver online mas sem nenhum produto cadastrado,
+ * envia o catálogo inicial de produtos e os usuários padrão para popular o banco.
+ */
+export async function syncInitialDataToSupabaseIfEmpty(
+  products: Product[],
+  users: User[]
+): Promise<{ synced: boolean; productCount: number; userCount: number }> {
+  if (!isSupabaseConfigured()) {
+    return { synced: false, productCount: 0, userCount: 0 };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) return { synced: false, productCount: 0, userCount: 0 };
+
+  try {
+    const { count, error } = await client
+      .from('products')
+      .select('*', { count: 'exact', head: true });
+
+    if (error) {
+      console.warn('Não foi possível verificar contagem de produtos no Supabase:', error);
+      return { synced: false, productCount: 0, userCount: 0 };
+    }
+
+    // Se já existem produtos no Supabase, não sobreescreve
+    if (count && count > 0) {
+      return { synced: false, productCount: count, userCount: 0 };
+    }
+
+    // Supabase está zerado, vamos subir os produtos
+    let productSuccess = 0;
+    for (const p of products) {
+      const ok = await upsertProductInSupabase(p);
+      if (ok) productSuccess++;
+    }
+
+    let userSuccess = 0;
+    for (const u of users) {
+      const ok = await upsertUserInSupabase(u);
+      if (ok) userSuccess++;
+    }
+
+    return { synced: true, productCount: productSuccess, userCount: userSuccess };
+  } catch (e) {
+    console.error('Falha na sincronização inicial com Supabase:', e);
+    return { synced: false, productCount: 0, userCount: 0 };
   }
 }
