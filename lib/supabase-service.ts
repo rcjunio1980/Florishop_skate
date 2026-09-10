@@ -199,65 +199,217 @@ export async function deleteProductFromSupabase(productId: string): Promise<bool
 }
 
 /**
- * Salva um novo pedido e seus respectivos itens no Supabase
+ * Salva um novo pedido e seus respectivos itens no Supabase de forma segura e resiliente.
+ * Garante que chaves estrangeiras (user_id e product_id) não quebrem a gravação caso o usuário
+ * ou produto não existam ou tenham IDs locais/temporários.
  */
-export async function createOrderInSupabase(order: Order): Promise<boolean> {
+export async function createOrderInSupabase(order: Order): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient();
-  if (!client) return false;
+  if (!client) {
+    return { success: false, error: 'Cliente Supabase não configurado ou offline.' };
+  }
 
   try {
-    // 1. Inserir registro principal do pedido
-    const { error: orderError } = await client.from('orders').insert({
+    // 1. Validação do user_id contra restrição de chave estrangeira
+    let validUserId: string | null = null;
+    if (order.userId) {
+      try {
+        const { data: userExists } = await client
+          .from('users')
+          .select('id')
+          .eq('id', order.userId)
+          .maybeSingle();
+
+        if (userExists?.id) {
+          validUserId = userExists.id;
+        } else if (order.customerEmail) {
+          // Tenta localizar por e-mail caso o ID local seja diferente
+          const { data: userByEmail } = await client
+            .from('users')
+            .select('id')
+            .eq('email', order.customerEmail.toLowerCase().trim())
+            .maybeSingle();
+          if (userByEmail?.id) {
+            validUserId = userByEmail.id;
+          }
+        }
+      } catch (e) {
+        console.warn('[Supabase] Aviso ao validar user_id do pedido:', e);
+      }
+    }
+
+    // 2. Normalizar data para formato ISO seguro aceito pelo PostgreSQL TIMESTAMPTZ
+    let safeDate = new Date().toISOString();
+    if (order.date) {
+      const parsed = new Date(order.date);
+      if (!isNaN(parsed.getTime())) {
+        safeDate = parsed.toISOString();
+      }
+    }
+
+    // 3. Inserir registro principal do pedido
+    const { error: orderError } = await client.from('orders').upsert({
       id: order.id,
-      user_id: order.userId || null,
-      date: order.date,
-      subtotal: order.subtotal,
-      discount: order.discount,
-      interest: order.interest || 0,
-      shipping_cost: order.shippingCost || 0,
-      shipping_method: order.shippingMethod || 'PAC',
+      user_id: validUserId,
+      date: safeDate,
+      subtotal: Number(order.subtotal) || 0,
+      discount: Number(order.discount) || 0,
+      interest: Number(order.interest) || 0,
+      shipping_cost: Number(order.shippingCost) || 0,
+      shipping_method: order.shippingMethod || 'Melhor Envio - PAC Correios',
       shipping_address: order.shippingAddress || {},
-      total: order.total,
+      total: Number(order.total) || 0,
       payment_method: order.paymentMethod,
       payment_details: order.paymentDetails || {},
       customer_name: order.customerName,
       customer_email: order.customerEmail,
       customer_phone: order.customerPhone || null,
-      status: order.status,
+      status: order.status || 'Aguardando Pagamento',
       admin_notes: order.adminNotes || null,
       tracking_code: order.trackingCode || null,
-    });
+    }, { onConflict: 'id' });
 
     if (orderError) {
-      console.error('Erro ao salvar pedido no Supabase:', orderError);
-      return false;
+      console.error('[Supabase] Erro ao salvar pedido na tabela orders:', orderError);
+      return { success: false, error: orderError.message };
     }
 
-    // 2. Inserir itens do pedido
+    // 4. Inserir itens do pedido validando product_id
     if (order.items && order.items.length > 0) {
-      const itemsToInsert = order.items.map((it) => ({
-        order_id: order.id,
-        product_id: it.product.id || null,
-        product_name: it.product.name,
-        product_sku: it.product.sku || null,
-        product_image: it.product.images?.[0] || null,
-        sale_price: it.isGift ? 0 : it.product.salePrice,
-        quantity: it.quantity,
-        selected_size: it.selectedSize || null,
-        is_gift: Boolean(it.isGift),
-        custom_note: it.customNote || null,
-      }));
+      // Pré-carrega IDs de produtos para garantir integridade referencial
+      const productIds = order.items
+        .map((it) => it.product?.id)
+        .filter((id): id is string => Boolean(id));
+
+      let existingProductIds = new Set<string>();
+      if (productIds.length > 0) {
+        try {
+          const { data: dbProducts } = await client
+            .from('products')
+            .select('id')
+            .in('id', productIds);
+          if (dbProducts) {
+            existingProductIds = new Set(dbProducts.map((p) => p.id));
+          }
+        } catch (e) {
+          console.warn('[Supabase] Aviso ao checar product_id dos itens:', e);
+        }
+      }
+
+      // Remove itens antigos se for um upsert do mesmo pedido
+      await client.from('order_items').delete().eq('order_id', order.id);
+
+      const itemsToInsert = order.items.map((it) => {
+        const hasValidDbProduct = it.product?.id && existingProductIds.has(it.product.id);
+        return {
+          order_id: order.id,
+          product_id: hasValidDbProduct ? it.product.id : null,
+          product_name: it.product.name,
+          product_sku: it.product.sku || null,
+          product_image: it.product.images?.[0] || null,
+          sale_price: it.isGift ? 0 : Number(it.product.salePrice) || 0,
+          quantity: Math.max(1, Number(it.quantity) || 1),
+          selected_size: it.selectedSize || null,
+          is_gift: Boolean(it.isGift),
+          custom_note: it.customNote || null,
+        };
+      });
 
       const { error: itemsError } = await client.from('order_items').insert(itemsToInsert);
       if (itemsError) {
-        console.error('Erro ao salvar itens do pedido no Supabase:', itemsError);
+        console.error('[Supabase] Erro ao salvar itens do pedido:', itemsError);
       }
     }
 
-    return true;
+    console.log(`[Supabase] Pedido ${order.id} salvo com sucesso no banco!`);
+    return { success: true };
+  } catch (e: any) {
+    console.error('[Supabase] Exceção ao registrar pedido:', e);
+    return { success: false, error: e?.message || 'Erro inesperado' };
+  }
+}
+
+/**
+ * Busca todos os pedidos e seus itens cadastrados no Supabase
+ */
+export async function fetchOrdersFromSupabase(): Promise<Order[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('orders')
+      .select('*, order_items(*)')
+      .order('date', { ascending: false });
+
+    if (error) {
+      console.warn('[Supabase] Erro ao buscar pedidos:', error);
+      return null;
+    }
+
+    if (!data) return [];
+
+    return data.map((row: any): Order => {
+      let formattedDate = row.date;
+      try {
+        if (row.date) {
+          const d = new Date(row.date);
+          if (!isNaN(d.getTime())) {
+            formattedDate = d.toLocaleString('pt-BR');
+          }
+        }
+      } catch {
+        formattedDate = row.date || new Date().toLocaleString('pt-BR');
+      }
+
+      const items = (row.order_items || []).map((it: any) => ({
+        product: {
+          id: it.product_id || `prod-${it.id}`,
+          name: it.product_name,
+          category: 'Skate',
+          brand: 'Florishop',
+          sku: it.product_sku || '',
+          purchasePrice: 0,
+          profitMargin: 0,
+          salePrice: Number(it.sale_price) || 0,
+          stockQuantity: 1,
+          images: it.product_image ? [it.product_image] : [],
+          specs: [],
+          description: it.product_name,
+          featured: false,
+          sizes: it.selected_size ? [it.selected_size] : [],
+        } as Product,
+        quantity: Number(it.quantity) || 1,
+        selectedSize: it.selected_size || undefined,
+        isGift: Boolean(it.is_gift),
+        customNote: it.custom_note || undefined,
+      }));
+
+      return {
+        id: row.id,
+        userId: row.user_id || undefined,
+        date: formattedDate,
+        items,
+        subtotal: Number(row.subtotal) || 0,
+        discount: Number(row.discount) || 0,
+        interest: Number(row.interest) || 0,
+        shippingCost: Number(row.shipping_cost) || 0,
+        shippingMethod: row.shipping_method || 'Melhor Envio',
+        shippingAddress: row.shipping_address || undefined,
+        total: Number(row.total) || 0,
+        paymentMethod: row.payment_method,
+        paymentDetails: row.payment_details || {},
+        customerName: row.customer_name,
+        customerEmail: row.customer_email,
+        customerPhone: row.customer_phone || undefined,
+        status: row.status,
+        adminNotes: row.admin_notes || undefined,
+        trackingCode: row.tracking_code || undefined,
+      };
+    });
   } catch (e) {
-    console.error('Exceção ao registrar pedido no Supabase:', e);
-    return false;
+    console.warn('[Supabase] Exceção ao buscar pedidos:', e);
+    return null;
   }
 }
 
@@ -324,23 +476,47 @@ export async function recordStockMovementInSupabase(movement: StockMovement): Pr
   if (!client) return false;
 
   try {
+    let validProductId: string | null = null;
+    if (movement.productId) {
+      try {
+        const { data: pExists } = await client
+          .from('products')
+          .select('id')
+          .eq('id', movement.productId)
+          .maybeSingle();
+        if (pExists?.id) {
+          validProductId = pExists.id;
+        }
+      } catch {
+        validProductId = null;
+      }
+    }
+
+    let safeDate = new Date().toISOString();
+    if (movement.date) {
+      const parsed = new Date(movement.date);
+      if (!isNaN(parsed.getTime())) {
+        safeDate = parsed.toISOString();
+      }
+    }
+
     const { error } = await client.from('stock_movements').insert({
       id: movement.id,
-      product_id: movement.productId,
+      product_id: validProductId,
       product_name: movement.productName,
       type: movement.type,
       quantity: movement.quantity,
-      date: movement.date,
+      date: safeDate,
       notes: movement.notes,
     });
 
     if (error) {
-      console.error('Erro ao registrar movimentação no Supabase:', error);
+      console.error('[Supabase] Erro ao registrar movimentação no Supabase:', error);
       return false;
     }
     return true;
   } catch (e) {
-    console.error('Exceção ao registrar movimentação no Supabase:', e);
+    console.error('[Supabase] Exceção ao registrar movimentação no Supabase:', e);
     return false;
   }
 }
@@ -356,7 +532,7 @@ export async function upsertUserInSupabase(user: User): Promise<boolean> {
     const { error } = await client.from('users').upsert({
       id: user.id,
       name: user.name,
-      email: user.email,
+      email: user.email.toLowerCase().trim(),
       password_hash: user.password || null,
       phone: user.phone || null,
       cpf: user.cpf || null,
@@ -374,6 +550,66 @@ export async function upsertUserInSupabase(user: User): Promise<boolean> {
     console.error('Exceção ao salvar usuário no Supabase:', e);
     return false;
   }
+}
+
+/**
+ * Sincroniza pedidos locais para o Supabase se a tabela de pedidos estiver vazia
+ */
+export async function syncInitialOrdersToSupabaseIfEmpty(
+  orders: Order[]
+): Promise<{ synced: boolean; orderCount: number }> {
+  if (!isSupabaseConfigured() || orders.length === 0) {
+    return { synced: false, orderCount: 0 };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) return { synced: false, orderCount: 0 };
+
+  try {
+    const { count, error } = await client
+      .from('orders')
+      .select('*', { count: 'exact', head: true });
+
+    if (error) {
+      console.warn('[Supabase] Aviso ao checar contagem de pedidos:', error);
+      return { synced: false, orderCount: 0 };
+    }
+
+    if (count && count > 0) {
+      return { synced: false, orderCount: count };
+    }
+
+    let successCount = 0;
+    for (const order of orders) {
+      const res = await createOrderInSupabase(order);
+      if (res.success) successCount++;
+    }
+
+    return { synced: true, orderCount: successCount };
+  } catch (e) {
+    console.warn('[Supabase] Erro ao sincronizar pedidos iniciais:', e);
+    return { synced: false, orderCount: 0 };
+  }
+}
+
+/**
+ * Sincroniza todos os pedidos para o Supabase (upsert manual sob demanda)
+ */
+export async function syncAllOrdersToSupabase(
+  orders: Order[]
+): Promise<{ success: number; failed: number }> {
+  if (!isSupabaseConfigured()) {
+    return { success: 0, failed: orders.length };
+  }
+
+  let success = 0;
+  let failed = 0;
+  for (const o of orders) {
+    const res = await createOrderInSupabase(o);
+    if (res.success) success++;
+    else failed++;
+  }
+  return { success, failed };
 }
 
 /**

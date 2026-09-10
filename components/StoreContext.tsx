@@ -27,7 +27,10 @@ import {
   upsertUserInSupabase,
   recordStockMovementInSupabase,
   syncInitialDataToSupabaseIfEmpty,
-  fetchProductsFromSupabase
+  fetchProductsFromSupabase,
+  fetchOrdersFromSupabase,
+  syncInitialOrdersToSupabaseIfEmpty,
+  syncAllOrdersToSupabase
 } from '@/lib/supabase-service';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
@@ -83,6 +86,7 @@ interface StoreContextType {
   updateOrder: (orderId: string, updatedData: Partial<Order>) => void;
   deleteOrder: (orderId: string, restoreStock?: boolean) => void;
   cancelOrder: (orderId: string, reason?: string) => void;
+  syncOrdersWithSupabase: () => Promise<{ success: boolean; count: number; error?: string }>;
   addItemToOrder: (orderId: string, item: CartItem, isGift?: boolean) => void;
   removeItemFromOrder: (orderId: string, itemIndex: number, restoreStock?: boolean) => void;
   updateOrderItemQuantity: (orderId: string, itemIndex: number, newQty: number) => void;
@@ -244,9 +248,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       syncInitialDataToSupabaseIfEmpty(products, users)
         .then((res) => {
           if (res.synced) {
-            console.log(`[Supabase] Sincronização inicial concluída: ${res.productCount} produtos enviados.`);
+            console.log(`[Supabase] Sincronização inicial de produtos: ${res.productCount} produtos enviados.`);
           } else if (res.productCount > 0) {
-            // Se já existem produtos no Supabase, carrega os dados mais recentes da nuvem
             fetchProductsFromSupabase().then((remoteProducts) => {
               if (remoteProducts && remoteProducts.length > 0) {
                 setProducts(remoteProducts);
@@ -255,6 +258,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         })
         .catch((e) => console.warn('[Supabase] Erro ao sincronizar catálogo inicial:', e));
+
+      // Sincronização e carregamento de pedidos no Supabase
+      syncInitialOrdersToSupabaseIfEmpty(orders)
+        .then((res) => {
+          if (res.synced) {
+            console.log(`[Supabase] Sincronização de pedidos iniciais: ${res.orderCount} enviados.`);
+          }
+          fetchOrdersFromSupabase().then((remoteOrders) => {
+            if (remoteOrders && remoteOrders.length > 0) {
+              setOrders((local) => {
+                const remoteMap = new Map(remoteOrders.map((o) => [o.id, o]));
+                const localOnly = local.filter((o) => !remoteMap.has(o.id));
+                // Persiste localmente pedidos que não estavam na nuvem ainda
+                for (const l of localOnly) {
+                  createOrderInSupabase(l).catch(() => {});
+                }
+                return [...localOnly, ...remoteOrders];
+              });
+            }
+          });
+        })
+        .catch((e) => console.warn('[Supabase] Erro ao sincronizar pedidos:', e));
     }
   }, [isHydrated]);
 
@@ -601,6 +626,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const syncOrdersWithSupabase = async (): Promise<{ success: boolean; count: number; error?: string }> => {
+    if (!isSupabaseConfigured()) {
+      return { success: false, count: 0, error: 'Supabase não está configurado nas variáveis de ambiente.' };
+    }
+    try {
+      const pushRes = await syncAllOrdersToSupabase(orders);
+      const remoteOrders = await fetchOrdersFromSupabase();
+      if (remoteOrders && remoteOrders.length > 0) {
+        setOrders(remoteOrders);
+        return { success: true, count: remoteOrders.length };
+      }
+      return { success: true, count: pushRes.syncedCount };
+    } catch (e: any) {
+      return { success: false, count: 0, error: e?.message || 'Falha ao sincronizar pedidos com o Supabase' };
+    }
+  };
+
   const addItemToOrder = (orderId: string, item: CartItem, isGift: boolean = false) => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder) return;
@@ -933,9 +975,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     clearCart();
 
     if (isSupabaseConfigured()) {
-      createOrderInSupabase(newOrder).catch((e) =>
-        console.warn('Falha ao salvar pedido no Supabase:', e)
-      );
+      if (currentUser) {
+        upsertUserInSupabase(currentUser).catch((e) =>
+          console.warn('[Checkout] Aviso ao sincronizar usuário antes do pedido:', e)
+        );
+      }
+      createOrderInSupabase(newOrder)
+        .then((res) => {
+          if (res.success) {
+            console.log(`[Checkout] Pedido #${newOrder.id} gravado com sucesso no Supabase!`);
+          } else {
+            console.warn(`[Checkout] Falha ao gravar pedido #${newOrder.id} no Supabase:`, res.error);
+          }
+        })
+        .catch((e) => console.warn('Falha ao salvar pedido no Supabase:', e));
+
       for (const m of newMovements) {
         recordStockMovementInSupabase(m).catch(() => {});
       }
@@ -1116,6 +1170,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateOrder,
         deleteOrder,
         cancelOrder,
+        syncOrdersWithSupabase,
         addItemToOrder,
         removeItemFromOrder,
         updateOrderItemQuantity,

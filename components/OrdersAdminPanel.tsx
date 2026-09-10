@@ -37,7 +37,8 @@ import {
   Mail,
   Sparkles,
   ArrowRight,
-  RefreshCw
+  RefreshCw,
+  Database
 } from 'lucide-react';
 
 const STATUS_CONFIG: Record<
@@ -153,8 +154,10 @@ export const OrdersAdminPanel: React.FC = () => {
     removeItemFromOrder,
     updateOrderItemQuantity,
     addGiftToOrder,
+    syncOrdersWithSupabase,
   } = useStore();
 
+  const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('Todos');
   const [paymentFilter, setPaymentFilter] = useState<string>('Todos');

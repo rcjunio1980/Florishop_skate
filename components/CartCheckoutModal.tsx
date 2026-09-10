@@ -98,47 +98,83 @@ export const CartCheckoutModal: React.FC = () => {
   const [cepError, setCepError] = useState('');
   const [cepCalculated, setCepCalculated] = useState(false);
 
-  // Opções padrão calculadas (inicializadas com base no subtotal)
+  // Opções padrão calculadas via Melhor Envio (inicializadas com base no subtotal)
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([
     {
-      id: 'pac',
-      name: 'PAC Correios - Convencional',
-      carrier: 'Correios',
-      price: subtotal >= 250 ? 0 : 22.90,
-      originalPrice: subtotal >= 250 ? 22.90 : undefined,
-      deadline: '5 a 8 dias úteis',
+      id: 'me-jadlog-package',
+      name: 'Jadlog .Package (Melhor Envio)',
+      carrier: 'Jadlog',
+      carrierService: 'Melhor Envio - Jadlog .Package',
+      price: subtotal >= 250 ? 0 : 18.90,
+      originalPrice: subtotal >= 250 ? 18.90 : 27.50,
+      discountPercent: 31,
+      deadline: '3 a 6 dias úteis',
       isFree: subtotal >= 250,
-      tag: subtotal >= 250 ? 'FRETE GRÁTIS' : 'Econômico',
+      tag: subtotal >= 250 ? 'FRETE GRÁTIS' : 'Econômico Destaque',
+      provider: 'Melhor Envio',
     },
     {
-      id: 'sedex',
-      name: 'SEDEX Correios - Expresso',
+      id: 'me-correios-pac',
+      name: 'Correios PAC (Melhor Envio)',
       carrier: 'Correios',
-      price: 36.90,
-      deadline: '2 a 3 dias úteis',
-      tag: 'Mais Rápido',
+      carrierService: 'Melhor Envio - Correios PAC',
+      price: subtotal >= 250 ? 0 : 22.90,
+      originalPrice: subtotal >= 250 ? 22.90 : 31.90,
+      discountPercent: 28,
+      deadline: '4 a 7 dias úteis',
+      isFree: subtotal >= 250,
+      tag: subtotal >= 250 ? 'FRETE GRÁTIS' : 'Econômico Oficial',
+      provider: 'Melhor Envio',
     },
     {
-      id: 'motoboy',
+      id: 'me-correios-sedex',
+      name: 'Correios SEDEX (Melhor Envio)',
+      carrier: 'Correios',
+      carrierService: 'Melhor Envio - Correios SEDEX',
+      price: 36.90,
+      originalPrice: 54.00,
+      discountPercent: 32,
+      deadline: '2 a 3 dias úteis',
+      tag: 'Mais Rápido / Expresso',
+      provider: 'Melhor Envio',
+    },
+    {
+      id: 'me-loggi-express',
+      name: 'Loggi Express (Melhor Envio)',
+      carrier: 'Loggi',
+      carrierService: 'Melhor Envio - Loggi Express',
+      price: 24.50,
+      originalPrice: 34.00,
+      discountPercent: 28,
+      deadline: '2 a 4 dias úteis',
+      tag: 'Rápido & Rastreado',
+      provider: 'Melhor Envio',
+    },
+    {
+      id: 'florishop-motoboy',
       name: 'Entrega Expressa / Motoboy Local',
       carrier: 'Florishop Express',
-      price: 16.00,
+      carrierService: 'Florishop Express Motoboy',
+      price: 14.00,
       deadline: 'Até 24 horas (mesmo dia)',
       tag: 'Entrega Local',
+      provider: 'Local',
     },
     {
-      id: 'retirada',
+      id: 'florishop-retirada',
       name: 'Retirada no Skatepark / Loja Física',
       carrier: 'Florishop Skate',
+      carrierService: 'Retirada Presencial no Skatepark',
       price: 0,
       deadline: 'Disponível em até 2 horas',
       isFree: true,
       tag: 'Sem Custo de Envio',
+      provider: 'Local',
     },
   ]);
 
   // ID da opção de frete selecionada
-  const [selectedShippingId, setSelectedShippingId] = useState<string>('pac');
+  const [selectedShippingId, setSelectedShippingId] = useState<string>('me-jadlog-package');
 
   // Modo de frete manual ("Colocar o valor do frete manualmente")
   const [isManualShipping, setIsManualShipping] = useState<boolean>(false);
@@ -207,12 +243,12 @@ export const CartCheckoutModal: React.FC = () => {
         state: result.address.state || prev.state,
       }));
 
-      // Seleciona PAC por padrão (ou mantém a seleção se válida)
-      if (!isManualShipping) {
-        setSelectedShippingId(result.options[0]?.id || 'pac');
+      // Seleciona a opção mais vantajosa do Melhor Envio
+      if (!isManualShipping && result.options.length > 0) {
+        setSelectedShippingId(result.options[0].id);
       }
     } catch {
-      setCepError('Não foi possível consultar os Correios no momento. Você também pode colocar o valor manual do frete.');
+      setCepError('Não foi possível consultar a cotação do Melhor Envio no momento. Você também pode colocar o valor manual do frete.');
     } finally {
       setIsSearchingCep(false);
     }
@@ -916,13 +952,18 @@ export const CartCheckoutModal: React.FC = () => {
 
               {/* Bloco 2: Opções de Frete (Saber o Frete vs Colocar Frete Manual) */}
               <div className="pt-2 border-t border-[#2a2a2a] space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold text-white uppercase flex items-center gap-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
                     <Truck className="w-4 h-4 text-[#ff544b]" />
-                    Modalidades de Frete Disponíveis:
-                  </span>
+                    <span className="font-mono text-xs font-bold text-white uppercase">
+                      Cotação via Melhor Envio:
+                    </span>
+                    <span className="bg-blue-950/80 border border-blue-500/40 text-blue-300 text-[9px] px-2 py-0.5 rounded font-mono font-bold">
+                      Jadlog • Correios • Loggi
+                    </span>
+                  </div>
                   <span className="font-mono text-[10px] text-emerald-400">
-                    {subtotal >= 250 ? '🎉 Você ganhou Frete Grátis no PAC!' : 'Frete Grátis nas compras acima de R$ 250'}
+                    {subtotal >= 250 ? '🎉 Frete Grátis ativado no PAC & Jadlog!' : 'Frete Grátis nas compras acima de R$ 250'}
                   </span>
                 </div>
 
@@ -931,45 +972,67 @@ export const CartCheckoutModal: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono">
                     {shippingOptions.map((opt) => {
                       const isSelected = selectedShippingId === opt.id;
+                      const hasDiscount = opt.originalPrice && opt.originalPrice > opt.price && opt.price > 0;
+
                       return (
                         <div
                           key={opt.id}
                           onClick={() => setSelectedShippingId(opt.id)}
                           className={`p-3.5 rounded border cursor-pointer transition-all flex flex-col justify-between ${
                             isSelected
-                              ? 'bg-[#ff544b]/10 border-[#ff544b] text-white shadow-md'
+                              ? 'bg-[#ff544b]/10 border-[#ff544b] text-white shadow-md ring-1 ring-[#ff544b]/50'
                               : 'bg-[#201f1f] border-[#353534] text-gray-300 hover:border-gray-500'
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name="checkoutShipping"
-                                checked={isSelected}
-                                onChange={() => setSelectedShippingId(opt.id)}
-                                className="accent-[#ff544b]"
-                              />
-                              <span className="text-xs font-bold text-white">{opt.name}</span>
+                          <div>
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  name="checkoutShipping"
+                                  checked={isSelected}
+                                  onChange={() => setSelectedShippingId(opt.id)}
+                                  className="accent-[#ff544b]"
+                                />
+                                <span className="text-xs font-bold text-white leading-snug">{opt.name}</span>
+                              </div>
+                              {opt.tag && (
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap ${
+                                  opt.isFree ? 'bg-emerald-500 text-black' : 'bg-[#2a2a2a] text-[#ffb4ab] border border-[#ff544b]/30'
+                                }`}>
+                                  {opt.tag}
+                                </span>
+                              )}
                             </div>
-                            {opt.tag && (
-                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                opt.isFree ? 'bg-emerald-500 text-black' : 'bg-[#2a2a2a] text-[#ffb4ab]'
-                              }`}>
-                                {opt.tag}
+
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-[10px] text-gray-400 bg-black/40 px-1.5 py-0.5 rounded border border-[#2d2c2c]">
+                                {opt.carrier}
                               </span>
-                            )}
+                              {opt.discountPercent && !opt.isFree && (
+                                <span className="text-[9px] text-emerald-400 font-bold bg-emerald-950/50 border border-emerald-500/30 px-1 rounded">
+                                  -{opt.discountPercent}% OFF
+                                </span>
+                              )}
+                            </div>
                           </div>
 
-                          <div className="flex items-center justify-between text-xs pt-1 border-t border-[#2a2a2a]">
+                          <div className="flex items-center justify-between text-xs pt-2 border-t border-[#2a2a2a]">
                             <span className="text-[11px] text-gray-400">{opt.deadline}</span>
-                            <span className="text-sm font-bold">
-                              {opt.price === 0 ? (
-                                <span className="text-emerald-400">GRÁTIS</span>
-                              ) : (
-                                <span className="text-[#ff544b]">R$ {opt.price.toFixed(2)}</span>
+                            <div className="text-right">
+                              {hasDiscount && (
+                                <span className="text-[10px] text-gray-500 line-through mr-1.5">
+                                  R$ {opt.originalPrice!.toFixed(2)}
+                                </span>
                               )}
-                            </span>
+                              <span className="text-sm font-bold">
+                                {opt.price === 0 ? (
+                                  <span className="text-emerald-400 font-extrabold">GRÁTIS</span>
+                                ) : (
+                                  <span className="text-[#ff544b]">R$ {opt.price.toFixed(2)}</span>
+                                )}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );
