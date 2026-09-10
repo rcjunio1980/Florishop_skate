@@ -3,7 +3,8 @@
 import React, { useState } from 'react';
 import { useStore } from './StoreContext';
 import { Product } from '@/lib/skate-store';
-import { ShoppingCart, Truck, ShieldCheck, ArrowLeft, Check, Plus, Minus, Share2 } from 'lucide-react';
+import { ShoppingCart, Truck, ShieldCheck, ArrowLeft, Check, Plus, Minus, Share2, Search, MapPin, Loader2, Sparkles } from 'lucide-react';
+import { fetchAddressAndShipping, cleanCep, formatCep, ShippingOption } from '@/lib/shipping';
 
 export const ProductDetailView: React.FC = () => {
   const {
@@ -14,12 +15,44 @@ export const ProductDetailView: React.FC = () => {
     openProductDetail,
     isLoggedIn,
     openAuthModal,
+    currentUser,
   } = useStore();
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [userSelectedSize, setUserSelectedSize] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [addedToast, setAddedToast] = useState(false);
+
+  // Shipping calculator state
+  const [cepInput, setCepInput] = useState(currentUser?.address?.cep || '');
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+  const [shippingOptions, setShippingOptions] = useState<ShippingOption[] | null>(null);
+  const [shippingAddressInfo, setShippingAddressInfo] = useState<string>('');
+  const [shippingError, setShippingError] = useState<string | null>(null);
+
+  const handleCalculateShipping = async () => {
+    const clean = cleanCep(cepInput);
+    if (clean.length !== 8) {
+      setShippingError('Digite um CEP válido com 8 dígitos (ex: 88010-000)');
+      return;
+    }
+
+    setShippingError(null);
+    setIsCalculatingShipping(true);
+
+    try {
+      const subtotal = (selectedProduct?.salePrice || 0) * quantity;
+      const result = await fetchAddressAndShipping(clean, subtotal);
+      setShippingOptions(result.options);
+      if (result.address.city && result.address.state) {
+        setShippingAddressInfo(`${result.address.city}/${result.address.state}`);
+      }
+    } catch {
+      setShippingError('Não foi possível calcular o frete no momento. Tente novamente.');
+    } finally {
+      setIsCalculatingShipping(false);
+    }
+  };
 
   const selectedSize =
     userSelectedSize !== null
@@ -249,6 +282,114 @@ export const ProductDetailView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-[#ff544b]" /> Garantia de 90 Dias
               </div>
+            </div>
+
+            {/* Simulador de Frete Oficial Melhor Envio */}
+            <div className="bg-[#181717] border border-[#353534] rounded-lg p-4 space-y-3 font-mono text-xs mt-4">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-white uppercase flex items-center gap-2">
+                  <Truck className="w-4 h-4 text-[#ff544b]" />
+                  Calcular Frete & Prazo (Melhor Envio)
+                </span>
+                <span className="text-[10px] text-gray-500 font-bold uppercase bg-[#252424] px-2 py-0.5 rounded border border-[#353534]">
+                  Melhor Envio
+                </span>
+              </div>
+
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <MapPin className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <input
+                    type="text"
+                    value={cepInput}
+                    maxLength={9}
+                    onChange={(e) => {
+                      const formatted = formatCep(e.target.value);
+                      setCepInput(formatted);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCalculateShipping();
+                      }
+                    }}
+                    placeholder="Digite seu CEP (ex: 88010-000)"
+                    className="w-full pl-9 pr-3 py-2 bg-[#201f1f] border border-[#353534] rounded text-white text-xs placeholder-gray-500 focus:outline-none focus:border-[#ff544b]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCalculateShipping}
+                  disabled={isCalculatingShipping}
+                  className="px-4 py-2 bg-[#ff544b] hover:bg-white hover:text-[#ff544b] text-white font-bold rounded transition-colors uppercase flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                >
+                  {isCalculatingShipping ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                  Calcular
+                </button>
+              </div>
+
+              {shippingError && (
+                <p className="text-[11px] text-red-400 font-mono">{shippingError}</p>
+              )}
+
+              {shippingAddressInfo && (
+                <p className="text-[11px] text-gray-400 font-mono flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-[#ff544b]" />
+                  Destino: <strong className="text-white">{shippingAddressInfo}</strong>
+                </p>
+              )}
+
+              {shippingOptions && shippingOptions.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-[#2d2c2c] max-h-56 overflow-y-auto pr-1">
+                  {shippingOptions.map((opt) => (
+                    <div
+                      key={opt.id}
+                      className="bg-[#201f1f] border border-[#2d2c2c] hover:border-[#403f3f] p-2.5 rounded flex items-center justify-between transition-colors"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-xs">{opt.name}</span>
+                          {opt.tag && (
+                            <span
+                              className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
+                                opt.isFree
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                  : 'bg-[#2a2929] text-gray-300 border border-[#403e3e]'
+                              }`}
+                            >
+                              {opt.tag}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-gray-400 block font-mono">
+                          Prazo: {opt.deadline}
+                        </span>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        {opt.isFree ? (
+                          <span className="text-emerald-400 font-bold text-xs uppercase">Grátis</span>
+                        ) : (
+                          <div className="flex flex-col items-end">
+                            {opt.originalPrice && opt.originalPrice > opt.price && (
+                              <span className="text-[10px] text-gray-500 line-through">
+                                R$ {opt.originalPrice.toFixed(2)}
+                              </span>
+                            )}
+                            <span className="text-[#ff544b] font-bold text-xs">
+                              R$ {opt.price.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

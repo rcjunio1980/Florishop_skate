@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useStore } from './StoreContext';
-import { Order, CartItem, Product, PaymentMethod } from '@/lib/skate-store';
+import { Order, CartItem, Product, PaymentMethod, OrderStatusHistoryItem } from '@/lib/skate-store';
 import {
   ClipboardList,
   Search,
@@ -23,6 +23,10 @@ import {
   Calendar,
   CreditCard,
   ShieldCheck,
+  History,
+  XCircle,
+  CheckCheck,
+  MessageSquare,
   Lock,
   LayoutDashboard,
   Users,
@@ -150,6 +154,7 @@ export const OrdersAdminPanel: React.FC = () => {
     openAuthModal,
     updateOrder,
     deleteOrder,
+    cancelOrder,
     addItemToOrder,
     removeItemFromOrder,
     updateOrderItemQuantity,
@@ -158,6 +163,7 @@ export const OrdersAdminPanel: React.FC = () => {
   } = useStore();
 
   const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
+  const [viewMode, setViewMode] = useState<'ativos' | 'historico' | 'todos'>('ativos');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('Todos');
   const [paymentFilter, setPaymentFilter] = useState<string>('Todos');
@@ -166,6 +172,11 @@ export const OrdersAdminPanel: React.FC = () => {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [deletingOrder, setDeletingOrder] = useState<Order | null>(null);
   const [restoreStockOnDelete, setRestoreStockOnDelete] = useState(true);
+  const [viewingHistoryOrder, setViewingHistoryOrder] = useState<Order | null>(null);
+  const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
+  const [cancelReason, setCancelReason] = useState<string>('Cancelamento solicitado pelo cliente');
+  const [customCancelReason, setCustomCancelReason] = useState<string>('');
+  const [newStatusNote, setNewStatusNote] = useState<string>('');
 
   // Add Forgotten Item Modal
   const [addingItemToOrder, setAddingItemToOrder] = useState<Order | null>(null);
@@ -219,8 +230,25 @@ export const OrdersAdminPanel: React.FC = () => {
     );
   }
 
-  // Filter orders
+  // Partition active vs history orders
+  const activeOrdersCount = orders.filter(
+    (o) => o.status !== 'Entregue' && o.status !== 'Cancelado'
+  ).length;
+
+  const historyOrdersCount = orders.filter(
+    (o) => o.status === 'Entregue' || o.status === 'Cancelado'
+  ).length;
+
+  // Filter orders according to selected tab and criteria
   const filteredOrders = orders.filter((o) => {
+    // 1. Tab partition:
+    if (viewMode === 'ativos') {
+      if (o.status === 'Entregue' || o.status === 'Cancelado') return false;
+    } else if (viewMode === 'historico') {
+      if (o.status !== 'Entregue' && o.status !== 'Cancelado') return false;
+    }
+
+    // 2. Search query:
     const term = searchTerm.toLowerCase();
     const matchesSearch =
       o.id.toLowerCase().includes(term) ||
@@ -230,6 +258,7 @@ export const OrdersAdminPanel: React.FC = () => {
       (o.trackingCode && o.trackingCode.toLowerCase().includes(term)) ||
       o.items.some((it) => it.product.name.toLowerCase().includes(term));
 
+    // 3. Dropdown filters:
     const matchesStatus = statusFilter === 'Todos' || o.status === statusFilter;
     const matchesPayment = paymentFilter === 'Todos' || o.paymentMethod === paymentFilter;
 
@@ -432,6 +461,74 @@ export const OrdersAdminPanel: React.FC = () => {
         </div>
       </div>
 
+      {/* Sub-Navigation Tabs: Gestão Ativa vs Histórico vs Todos */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#353534] pb-1">
+        <button
+          type="button"
+          onClick={() => {
+            setViewMode('ativos');
+            setStatusFilter('Todos');
+          }}
+          className={`px-5 py-3 rounded-t-lg font-bold text-xs uppercase flex items-center gap-2.5 transition-all border-b-2 ${
+            viewMode === 'ativos'
+              ? 'bg-[#201f1f] text-[#ff544b] border-[#ff544b] shadow-md'
+              : 'text-gray-400 hover:text-white border-transparent hover:bg-[#181717]'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          <span>Gestão de Pedidos em Andamento</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              viewMode === 'ativos' ? 'bg-[#ff544b] text-white' : 'bg-[#353534] text-gray-300'
+            }`}
+          >
+            {activeOrdersCount}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setViewMode('historico');
+            setStatusFilter('Todos');
+          }}
+          className={`px-5 py-3 rounded-t-lg font-bold text-xs uppercase flex items-center gap-2.5 transition-all border-b-2 ${
+            viewMode === 'historico'
+              ? 'bg-[#201f1f] text-emerald-400 border-emerald-400 shadow-md'
+              : 'text-gray-400 hover:text-white border-transparent hover:bg-[#181717]'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>Histórico de Pedidos (Finalizados & Cancelados)</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              viewMode === 'historico' ? 'bg-emerald-600 text-white' : 'bg-[#353534] text-gray-300'
+            }`}
+          >
+            {historyOrdersCount}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setViewMode('todos');
+            setStatusFilter('Todos');
+          }}
+          className={`px-5 py-3 rounded-t-lg font-bold text-xs uppercase flex items-center gap-2.5 transition-all border-b-2 ${
+            viewMode === 'todos'
+              ? 'bg-[#201f1f] text-gray-200 border-gray-400 shadow-md'
+              : 'text-gray-400 hover:text-white border-transparent hover:bg-[#181717]'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>Todos os Registros</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#353534] text-gray-300">
+            {orders.length}
+          </span>
+        </button>
+      </div>
+
       {/* Filter and Search Bar */}
       <div className="bg-[#181717] border border-[#353534] p-4 rounded-lg flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
         <div className="relative flex-1">
@@ -547,23 +644,54 @@ export const OrdersAdminPanel: React.FC = () => {
                   {/* Top Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Status Changer Quick Dropdown */}
-                    <select
-                      value={order.status}
-                      onChange={(e) => {
-                        const newStatus = e.target.value as Order['status'];
-                        updateOrder(order.id, { status: newStatus });
-                        showToast(`Status do pedido #${order.id} alterado para "${newStatus}"!`);
-                      }}
-                      className="bg-[#181717] border border-[#353534] text-xs text-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-[#ff544b] cursor-pointer"
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={order.status}
+                        onChange={(e) => {
+                          const newStatus = e.target.value as Order['status'];
+                          if (newStatus === order.status) return;
+
+                          updateOrder(
+                            order.id,
+                            { status: newStatus },
+                            {
+                              role: 'admin',
+                              name: 'Administrador Florishop',
+                              notes: `Status alterado no painel administrativo para "${newStatus}"`,
+                            }
+                          );
+
+                          if (newStatus === 'Entregue') {
+                            showToast(`Pedido #${order.id} marcado como Entregue! Registro salvo no histórico e transferido da gestão ativa.`);
+                          } else if (newStatus === 'Cancelado') {
+                            showToast(`Pedido #${order.id} cancelado! Registro salvo no histórico e transferido da gestão ativa.`);
+                          } else {
+                            showToast(`Status do pedido #${order.id} alterado para "${newStatus}". Novo registro salvo no histórico!`);
+                          }
+                        }}
+                        className="bg-[#181717] border border-[#353534] text-xs text-gray-300 rounded px-2.5 py-1.5 focus:outline-none focus:border-[#ff544b] cursor-pointer"
+                        title="Mudar status do pedido (grava novo registro de histórico)"
+                      >
+                        <option value="Aguardando Pagamento">Aguardando Pagamento</option>
+                        <option value="Aguardando Comprovante / Validação">Aguardando Comprovante</option>
+                        <option value="Pago / Aprovado">Pago / Aprovado</option>
+                        <option value="Em Separação">Em Separação</option>
+                        <option value="Enviado">Enviado</option>
+                        <option value="Entregue">Entregue (Finalizar)</option>
+                        <option value="Cancelado">Cancelado</option>
+                      </select>
+                    </div>
+
+                    {/* Botão para Visualizar Histórico de Estados */}
+                    <button
+                      type="button"
+                      onClick={() => setViewingHistoryOrder(order)}
+                      title="Ver todos os registros e linha do tempo de estados deste pedido"
+                      className="px-3 py-1.5 bg-[#201f1f] hover:bg-[#2d2c2c] border border-blue-500/40 text-blue-300 text-xs rounded font-bold flex items-center gap-1.5 transition-colors shadow-sm"
                     >
-                      <option value="Aguardando Pagamento">Aguardando Pagamento</option>
-                      <option value="Aguardando Comprovante / Validação">Aguardando Comprovante</option>
-                      <option value="Pago / Aprovado">Pago / Aprovado</option>
-                      <option value="Em Separação">Em Separação</option>
-                      <option value="Enviado">Enviado</option>
-                      <option value="Entregue">Entregue</option>
-                      <option value="Cancelado">Cancelado</option>
-                    </select>
+                      <History className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Histórico ({order.statusHistory?.length || 1})</span>
+                    </button>
 
                     <button
                       onClick={() => setEditingOrder(order)}
@@ -592,18 +720,82 @@ export const OrdersAdminPanel: React.FC = () => {
                       Dar Brinde
                     </button>
 
+                    {/* Botão Cancelar Pedido (Admin) */}
+                    {order.status !== 'Cancelado' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOrderToCancel(order);
+                          setCancelReason('Cancelamento solicitado pelo cliente');
+                          setCustomCancelReason('');
+                        }}
+                        title="Cancelar este pedido, devolver estoque e arquivar no histórico"
+                        className="px-3 py-1.5 bg-amber-950/40 hover:bg-amber-600 hover:text-black border border-amber-600/40 text-amber-300 text-xs rounded font-bold flex items-center gap-1.5 transition-colors"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>Cancelar</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         setDeletingOrder(order);
                         setRestoreStockOnDelete(true);
                       }}
-                      title="Excluir pedido"
+                      title="Excluir pedido definitivamente"
                       className="p-1.5 bg-[#2a1a1a] hover:bg-red-600 text-red-400 hover:text-white border border-red-900/50 rounded transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
+
+                {/* Banner de Status Finalizado ou Cancelado */}
+                {order.status === 'Entregue' && (
+                  <div className="bg-emerald-950/30 border-y border-emerald-500/30 px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-300">
+                    <span className="flex items-center gap-2 font-bold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      Pedido Finalizado — Entregue ao Cliente no Destino
+                    </span>
+                    <div className="flex items-center gap-3">
+                      {order.deliveredAt && (
+                        <span className="text-[11px] text-emerald-400/80 font-mono">
+                          Confirmado em: {new Date(order.deliveredAt).toLocaleString('pt-BR')}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setViewingHistoryOrder(order)}
+                        className="text-[11px] underline text-emerald-400 hover:text-emerald-200"
+                      >
+                        Ver trilha de auditoria
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {order.status === 'Cancelado' && (
+                  <div className="bg-red-950/30 border-y border-red-500/30 px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-red-300">
+                    <span className="flex items-center gap-2 font-bold">
+                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      Pedido Cancelado — Fora da Gestão Ativa (Guardado no Histórico)
+                    </span>
+                    <div className="flex items-center gap-3">
+                      {order.canceledAt && (
+                        <span className="text-[11px] text-red-400/80 font-mono">
+                          Cancelado em: {new Date(order.canceledAt).toLocaleString('pt-BR')}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setViewingHistoryOrder(order)}
+                        className="text-[11px] underline text-red-400 hover:text-red-200"
+                      >
+                        Ver motivo no histórico
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Customer and Shipping Details Strip */}
                 <div className="px-6 py-3 bg-[#1c1b1b] border-b border-[#2d2c2c] grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
@@ -1539,6 +1731,351 @@ export const OrdersAdminPanel: React.FC = () => {
                 className="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold text-xs uppercase transition-colors flex items-center gap-1.5"
               >
                 <Gift className="w-4 h-4" /> Incluir Brinde no Pedido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 4: HISTÓRICO DE ESTADOS & AUDITORIA DO PEDIDO */}
+      {/* ========================================================================= */}
+      {viewingHistoryOrder && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn font-sans">
+          <div className="bg-[#181717] border border-blue-500/50 rounded-xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-[#2d2c2c] bg-[#201f1f] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-extrabold text-white font-mono uppercase tracking-wide">
+                      Histórico de Estados — Pedido #{viewingHistoryOrder.id}
+                    </h3>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                      {viewingHistoryOrder.statusHistory?.length || 1} registros
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Cliente: <strong className="text-gray-200">{viewingHistoryOrder.customerName}</strong> • Total: <strong className="text-gray-200">R$ {viewingHistoryOrder.total.toFixed(2)}</strong> • Atual: <span className="text-[#ff544b] font-bold">{viewingHistoryOrder.status}</span>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setViewingHistoryOrder(null);
+                  setNewStatusNote('');
+                }}
+                className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#2e2d2d] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: Timeline of Status Records */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-[#151414]">
+              <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#353534]">
+                {(!viewingHistoryOrder.statusHistory || viewingHistoryOrder.statusHistory.length === 0) ? (
+                  <div className="relative">
+                    <div className="absolute -left-6 top-1.5 w-5 h-5 rounded-full bg-blue-600 border-2 border-[#181717] flex items-center justify-center">
+                      <div className="w-2 h-2 rounded-full bg-white" />
+                    </div>
+                    <div className="bg-[#201f1f] border border-[#353534] p-3.5 rounded-lg space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white uppercase">{viewingHistoryOrder.status}</span>
+                        <span className="text-gray-400 font-mono text-[11px]">{viewingHistoryOrder.date}</span>
+                      </div>
+                      <p className="text-xs text-gray-400">Criação do pedido</p>
+                    </div>
+                  </div>
+                ) : (
+                  viewingHistoryOrder.statusHistory.map((item, idx) => {
+                    const isLatest = idx === viewingHistoryOrder.statusHistory!.length - 1;
+                    const isCancel = item.status === 'Cancelado';
+                    const isDelivered = item.status === 'Entregue';
+
+                    return (
+                      <div key={item.id || idx} className="relative group">
+                        {/* Bullet indicator */}
+                        <div
+                          className={`absolute -left-6 top-1.5 w-5 h-5 rounded-full border-2 border-[#181717] flex items-center justify-center transition-all ${
+                            isDelivered
+                              ? 'bg-emerald-500'
+                              : isCancel
+                              ? 'bg-red-500'
+                              : isLatest
+                              ? 'bg-[#ff544b]'
+                              : 'bg-blue-600'
+                          }`}
+                        >
+                          <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                        </div>
+
+                        {/* Record Card */}
+                        <div
+                          className={`border rounded-lg p-4 transition-all ${
+                            isLatest
+                              ? 'bg-[#201f1f] border-[#ff544b]/50 shadow-md'
+                              : 'bg-[#1a1919] border-[#2e2d2d]'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-[#2d2c2c]">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`text-xs font-extrabold uppercase px-2.5 py-0.5 rounded font-mono ${
+                                  isDelivered
+                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                                    : isCancel
+                                    ? 'bg-red-950 text-red-300 border border-red-700'
+                                    : 'bg-[#282626] text-white border border-[#403e3e]'
+                                }`}
+                              >
+                                {item.status}
+                              </span>
+
+                              {item.fromStatus && item.fromStatus !== item.status && (
+                                <span className="text-[10px] text-gray-500 font-mono">
+                                  (anterior: {item.fromStatus})
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 text-[11px] font-mono text-gray-400">
+                              <Calendar className="w-3 h-3 text-gray-500" />
+                              <span>{item.formattedDate || new Date(item.timestamp).toLocaleString('pt-BR')}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2.5 flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                            <p className="text-xs text-gray-300 leading-relaxed flex-1">
+                              {item.notes || 'Transição de status registrada no sistema.'}
+                            </p>
+
+                            <div className="flex items-center gap-1.5 text-[11px] text-gray-400 bg-[#252424] px-2.5 py-1 rounded border border-[#353534] self-start sm:self-auto shrink-0 font-mono">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  item.updatedBy === 'admin'
+                                    ? 'bg-[#ff544b]'
+                                    : item.updatedBy === 'customer'
+                                    ? 'bg-emerald-400'
+                                    : 'bg-blue-400'
+                                }`}
+                              />
+                              <span className="capitalize">
+                                {item.updatedBy === 'admin'
+                                  ? 'Administrador'
+                                  : item.updatedBy === 'customer'
+                                  ? 'Cliente'
+                                  : 'Sistema'}
+                              </span>
+                              {item.authorName && (
+                                <span className="text-gray-500">• {item.authorName}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Add Note Section */}
+              <div className="bg-[#201f1f] border border-[#353534] rounded-lg p-4 space-y-3 mt-6">
+                <div className="flex items-center gap-2 text-xs font-bold text-gray-300 uppercase font-mono">
+                  <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Adicionar Anotação Administrativa ao Histórico</span>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newStatusNote}
+                    onChange={(e) => setNewStatusNote(e.target.value)}
+                    placeholder="Ex: Entramos em contato com o cliente via WhatsApp para confirmar endereço..."
+                    className="flex-1 bg-[#181717] border border-[#353534] text-xs text-white rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newStatusNote.trim()) {
+                        e.preventDefault();
+                        const currentHistory = viewingHistoryOrder.statusHistory || [];
+                        const newEntry: OrderStatusHistoryItem = {
+                          id: `sh-${viewingHistoryOrder.id}-${Date.now()}`,
+                          fromStatus: viewingHistoryOrder.status,
+                          status: viewingHistoryOrder.status,
+                          timestamp: new Date().toISOString(),
+                          formattedDate: new Date().toLocaleString('pt-BR'),
+                          updatedBy: 'admin',
+                          authorName: 'Administrador Florishop',
+                          notes: newStatusNote.trim(),
+                        };
+                        const updatedHistory = [...currentHistory, newEntry];
+                        updateOrder(viewingHistoryOrder.id, {
+                          statusHistory: updatedHistory,
+                        });
+                        setViewingHistoryOrder({
+                          ...viewingHistoryOrder,
+                          statusHistory: updatedHistory,
+                        });
+                        setNewStatusNote('');
+                        showToast('Nova anotação registrada no histórico com sucesso!');
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newStatusNote.trim()) return;
+                      const currentHistory = viewingHistoryOrder.statusHistory || [];
+                      const newEntry: OrderStatusHistoryItem = {
+                        id: `sh-${viewingHistoryOrder.id}-${Date.now()}`,
+                        fromStatus: viewingHistoryOrder.status,
+                        status: viewingHistoryOrder.status,
+                        timestamp: new Date().toISOString(),
+                        formattedDate: new Date().toLocaleString('pt-BR'),
+                        updatedBy: 'admin',
+                        authorName: 'Administrador Florishop',
+                        notes: newStatusNote.trim(),
+                      };
+                      const updatedHistory = [...currentHistory, newEntry];
+                      updateOrder(viewingHistoryOrder.id, {
+                        statusHistory: updatedHistory,
+                      });
+                      setViewingHistoryOrder({
+                        ...viewingHistoryOrder,
+                        statusHistory: updatedHistory,
+                      });
+                      setNewStatusNote('');
+                      showToast('Nova anotação registrada no histórico com sucesso!');
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold uppercase transition-colors flex items-center gap-1.5 shrink-0"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    Registrar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-[#2d2c2c] bg-[#201f1f] flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-mono">
+                ID do Pedido: {viewingHistoryOrder.id}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewingHistoryOrder(null);
+                  setNewStatusNote('');
+                }}
+                className="px-5 py-2 bg-[#2d2c2c] hover:bg-[#3d3c3c] text-white rounded text-xs font-bold uppercase transition-colors"
+              >
+                Fechar Histórico
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 5: CONFIRMAÇÃO DE CANCELAMENTO PELO ADMINISTRADOR */}
+      {/* ========================================================================= */}
+      {orderToCancel && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn font-sans">
+          <div className="bg-[#181717] border border-amber-500/50 rounded-xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#2d2c2c] pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <XCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white font-mono uppercase">
+                    Cancelar Pedido #{orderToCancel.id}
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    Cliente: {orderToCancel.customerName} • Valor: R$ {orderToCancel.total.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderToCancel(null)}
+                className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#2d2c2c]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-950/20 border border-amber-500/30 rounded text-xs text-amber-300/90 leading-relaxed font-mono">
+                <p className="font-bold flex items-center gap-1.5 text-amber-400 mb-1">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  Efeito do Cancelamento:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-[11px]">
+                  <li>O status do pedido será alterado para <strong>Cancelado</strong>.</li>
+                  <li>O estoque de todos os produtos comprados será <strong>devolvido automaticamente</strong>.</li>
+                  <li>Um novo registro será gravado na <strong>trilha de histórico de estados</strong>.</li>
+                  <li>O pedido <strong>sairá da gestão ativa de pedidos</strong> e ficará arquivado no <strong>Histórico de Pedidos</strong>.</li>
+                </ul>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-300 uppercase font-mono mb-2">
+                  Motivo do Cancelamento:
+                </label>
+                <select
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  className="w-full bg-[#201f1f] border border-[#353534] rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                >
+                  <option value="Cancelamento solicitado pelo cliente">Cancelamento solicitado pelo cliente</option>
+                  <option value="Pagamento expirado ou não identificado">Pagamento expirado ou não identificado</option>
+                  <option value="Desistência da compra">Desistência da compra</option>
+                  <option value="Suspeita de duplicidade ou fraude">Suspeita de duplicidade ou fraude</option>
+                  <option value="Avaria de estoque / item indisponível">Avaria de estoque / item indisponível</option>
+                  <option value="Outro">Outro motivo personalizado...</option>
+                </select>
+              </div>
+
+              {cancelReason === 'Outro' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 uppercase font-mono mb-1">
+                    Descreva o motivo:
+                  </label>
+                  <input
+                    type="text"
+                    value={customCancelReason}
+                    onChange={(e) => setCustomCancelReason(e.target.value)}
+                    placeholder="Especifique o motivo do cancelamento..."
+                    className="w-full bg-[#201f1f] border border-[#353534] rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#2d2c2c]">
+              <button
+                type="button"
+                onClick={() => setOrderToCancel(null)}
+                className="px-4 py-2 bg-transparent hover:bg-[#2d2c2c] text-gray-400 hover:text-white rounded text-xs font-bold uppercase transition-colors"
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const finalReason = cancelReason === 'Outro' ? (customCancelReason.trim() || 'Cancelado por motivo personalizado') : cancelReason;
+                  cancelOrder(orderToCancel.id, finalReason, 'admin');
+                  showToast(`Pedido #${orderToCancel.id} cancelado com sucesso e movido para o histórico.`);
+                  setOrderToCancel(null);
+                }}
+                className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold uppercase transition-colors flex items-center gap-1.5 shadow-lg"
+              >
+                <XCircle className="w-4 h-4" />
+                Confirmar Cancelamento
               </button>
             </div>
           </div>

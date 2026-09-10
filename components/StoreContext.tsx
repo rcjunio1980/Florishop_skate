@@ -5,6 +5,7 @@ import {
   Product,
   CartItem,
   Order,
+  OrderStatusHistoryItem,
   StockMovement,
   User,
   INITIAL_PRODUCTS,
@@ -16,8 +17,11 @@ import {
   INITIAL_FEATURED_CONFIG,
   calculateSalePriceFromMargin,
   calculateMarginFromSalePrice,
-  calculateUnitProfit
+  calculateUnitProfit,
+  UserPurchaseHistoryRecord
 } from '@/lib/skate-store';
+
+export type { UserPurchaseHistoryRecord };
 import {
   updateOrderInSupabase,
   deleteOrderFromSupabase,
@@ -30,7 +34,9 @@ import {
   fetchProductsFromSupabase,
   fetchOrdersFromSupabase,
   syncInitialOrdersToSupabaseIfEmpty,
-  syncAllOrdersToSupabase
+  syncAllOrdersToSupabase,
+  upsertPurchaseHistoryInSupabase,
+  fetchUserPurchaseHistoryFromSupabase
 } from '@/lib/supabase-service';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
@@ -39,6 +45,7 @@ interface StoreContextType {
   products: Product[];
   cart: CartItem[];
   orders: Order[];
+  userPurchaseHistory: UserPurchaseHistoryRecord[];
   stockMovements: StockMovement[];
   featuredConfig: FeaturedMonthConfig;
   users: User[];
@@ -83,9 +90,16 @@ interface StoreContextType {
   updateUserStatus: (userId: string, status: 'active' | 'blocked') => void;
   updateUserProfile: (userId: string, data: Partial<User>) => void;
   deleteUser: (userId: string) => void;
-  updateOrder: (orderId: string, updatedData: Partial<Order>) => void;
+  updateOrder: (
+    orderId: string,
+    updatedData: Partial<Order>,
+    contextAuthor?: { role?: 'admin' | 'customer' | 'system'; name?: string; notes?: string }
+  ) => void;
   deleteOrder: (orderId: string, restoreStock?: boolean) => void;
-  cancelOrder: (orderId: string, reason?: string) => void;
+  cancelOrder: (orderId: string, reason?: string, canceledBy?: 'admin' | 'customer') => void;
+  confirmOrderDelivered: (orderId: string, customerNotes?: string) => void;
+  recordPurchaseHistory: (order: Order, notes?: string) => Promise<void>;
+  getUserPurchaseHistory: (userIdOrEmail?: string) => UserPurchaseHistoryRecord[];
   syncOrdersWithSupabase: () => Promise<{ success: boolean; count: number; error?: string }>;
   addItemToOrder: (orderId: string, item: CartItem, isGift?: boolean) => void;
   removeItemFromOrder: (orderId: string, itemIndex: number, restoreStock?: boolean) => void;
@@ -136,6 +150,7 @@ const STORAGE_KEYS = {
   PRODUCTS: 'florishop_skate_products_v1',
   CART: 'florishop_skate_cart_v1',
   ORDERS: 'florishop_skate_orders_v1',
+  PURCHASE_HISTORY: 'florishop_skate_purchase_history_v1',
   MOVEMENTS: 'florishop_skate_movements_v1',
   FEATURED: 'florishop_skate_featured_v1',
   USERS: 'florishop_skate_users_v1',
@@ -146,6 +161,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
+  const [userPurchaseHistory, setUserPurchaseHistory] = useState<UserPurchaseHistoryRecord[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [featuredConfig, setFeaturedConfig] = useState<FeaturedMonthConfig>(INITIAL_FEATURED_CONFIG);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
@@ -175,9 +191,50 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
 
-        const savedCart = localStorage.getItem(STORAGE_KEYS.CART);
-        if (savedCart) {
-          setCart(JSON.parse(savedCart));
+        // 1. Hydrate users
+        const savedUsers = localStorage.getItem(STORAGE_KEYS.USERS);
+        if (savedUsers) {
+          const parsedUsers: User[] = JSON.parse(savedUsers);
+          // Garantir que o usuário admin padrão exista
+          const hasAdmin = parsedUsers.some((u) => u.role === 'admin');
+          if (!hasAdmin) {
+            const adminUser = INITIAL_USERS.find((u) => u.role === 'admin');
+            if (adminUser) parsedUsers.unshift(adminUser);
+          }
+          setUsers(parsedUsers);
+        } else {
+          setUsers(INITIAL_USERS);
+        }
+
+        // 2. Hydrate current logged user
+        let currentLoggedUser: User | null = null;
+        const savedCurrentUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        if (savedCurrentUser) {
+          try {
+            currentLoggedUser = JSON.parse(savedCurrentUser);
+            setCurrentUser(currentLoggedUser);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        // 3. Regra de Negócio do Carrinho:
+        // No carrinho de compras na tela principal, ele só deve aparecer alguma coisa quando estiver logado.
+        // A conta de administrador não deve ter carrinho de compras.
+        if (currentLoggedUser && currentLoggedUser.role !== 'admin') {
+          const userSpecificCart =
+            localStorage.getItem(`florishop_cart_${currentLoggedUser.id}`) ||
+            localStorage.getItem(STORAGE_KEYS.CART);
+          if (userSpecificCart) {
+            try {
+              setCart(JSON.parse(userSpecificCart));
+            } catch (e) {
+              setCart([]);
+            }
+          }
+        } else {
+          setCart([]);
+          localStorage.removeItem(STORAGE_KEYS.CART);
         }
 
         const savedOrders = localStorage.getItem(STORAGE_KEYS.ORDERS);
@@ -193,6 +250,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setOrders(INITIAL_ORDERS);
         }
 
+        // 4. Hydrate Purchase History Table
+        const savedHistory = localStorage.getItem(STORAGE_KEYS.PURCHASE_HISTORY);
+        if (savedHistory) {
+          try {
+            setUserPurchaseHistory(JSON.parse(savedHistory));
+          } catch (e) {
+            console.error('Error parsing purchase history:', e);
+          }
+        }
+
         const savedMovements = localStorage.getItem(STORAGE_KEYS.MOVEMENTS);
         if (savedMovements) {
           setStockMovements(JSON.parse(savedMovements));
@@ -202,31 +269,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (savedFeatured) {
           try {
             setFeaturedConfig(JSON.parse(savedFeatured));
-          } catch (e) {
-            console.error(e);
-          }
-        }
-
-        // Hydrate users
-        const savedUsers = localStorage.getItem(STORAGE_KEYS.USERS);
-        if (savedUsers) {
-          const parsedUsers: User[] = JSON.parse(savedUsers);
-          // Garantir que o usuário admin padrão exista
-          const hasAdmin = parsedUsers.some((u) => u.role === 'admin');
-          if (!hasAdmin) {
-            const adminUser = INITIAL_USERS.find((u) => u.role === 'admin');
-            if (adminUser) parsedUsers.unshift(adminUser);
-          }
-          setUsers(parsedUsers);
-        } else {
-          setUsers(INITIAL_USERS);
-        }
-
-        // Hydrate current logged user
-        const savedCurrentUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-        if (savedCurrentUser) {
-          try {
-            setCurrentUser(JSON.parse(savedCurrentUser));
           } catch (e) {
             console.error(e);
           }
@@ -296,11 +338,92 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     if (!isHydrated) return;
     try {
-      localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(cart));
+      if (currentUser && currentUser.role !== 'admin') {
+        localStorage.setItem(STORAGE_KEYS.CART, JSON.stringify(cart));
+        localStorage.setItem(`florishop_cart_${currentUser.id}`, JSON.stringify(cart));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.CART);
+      }
     } catch (e) {
       console.error(e);
     }
-  }, [cart, isHydrated]);
+  }, [cart, isHydrated, currentUser]);
+
+  // Persistir histórico permanente de compras localmente
+  useEffect(() => {
+    if (!isHydrated) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.PURCHASE_HISTORY, JSON.stringify(userPurchaseHistory));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [userPurchaseHistory, isHydrated]);
+
+  // Sincronizar pedidos 'Entregue' existentes com o histórico permanente de compras
+  useEffect(() => {
+    if (!isHydrated) return;
+    const deliveredOrders = orders.filter((o) => o.status === 'Entregue');
+    if (deliveredOrders.length === 0) return;
+
+    const timer = setTimeout(() => {
+      setUserPurchaseHistory((prev) => {
+        let changed = false;
+        const map = new Map(prev.map((h) => [h.orderId, h]));
+        for (const ord of deliveredOrders) {
+          if (!map.has(ord.id)) {
+            const rec: UserPurchaseHistoryRecord = {
+              id: `uph-${ord.id}`,
+              userId: ord.userId || (currentUser?.id ?? `user-${ord.customerEmail}`),
+              orderId: ord.id,
+              customerName: ord.customerName,
+              customerEmail: ord.customerEmail,
+              completedAt: ord.deliveredAt || new Date().toISOString(),
+              orderDate: ord.date,
+              total: ord.total,
+              subtotal: ord.subtotal,
+              shippingCost: ord.shippingCost || 0,
+              shippingMethod: ord.shippingMethod,
+              paymentMethod: ord.paymentMethod,
+              itemsCount: ord.items.reduce((sum, it) => sum + it.quantity, 0),
+              items: ord.items,
+              trackingCode: ord.trackingCode,
+              deliveryNotes: ord.adminNotes,
+              status: 'Entregue',
+              createdAt: new Date().toISOString(),
+            };
+            map.set(ord.id, rec);
+            changed = true;
+            if (isSupabaseConfigured()) {
+              upsertPurchaseHistoryInSupabase(rec).catch((err) =>
+                console.warn('Erro ao auto-sincronizar pedido entregue:', err)
+              );
+            }
+          }
+        }
+        return changed ? Array.from(map.values()) : prev;
+      });
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [orders, isHydrated, currentUser]);
+
+  // Carregar histórico de compras do Supabase se o usuário estiver logado
+  useEffect(() => {
+    if (!isHydrated || !isSupabaseConfigured() || !currentUser) return;
+    fetchUserPurchaseHistoryFromSupabase(currentUser.id || currentUser.email)
+      .then((remote) => {
+        if (remote && remote.length > 0) {
+          setUserPurchaseHistory((prev) => {
+            const map = new Map(prev.map((h) => [h.orderId, h]));
+            for (const r of remote) {
+              map.set(r.orderId, r);
+            }
+            return Array.from(map.values());
+          });
+        }
+      })
+      .catch((e) => console.warn('[Supabase] Erro ao carregar histórico de compras:', e));
+  }, [currentUser, isHydrated]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -373,6 +496,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setCurrentUser(found);
     closeAuthModal();
+
+    // Regra: Conta de administrador não tem carrinho. Cliente tem seu carrinho carregado.
+    if (found.role === 'admin') {
+      setCart([]);
+      localStorage.removeItem(STORAGE_KEYS.CART);
+    } else {
+      const userSavedCart =
+        localStorage.getItem(`florishop_cart_${found.id}`) ||
+        localStorage.getItem(STORAGE_KEYS.CART);
+      if (userSavedCart) {
+        try {
+          setCart(JSON.parse(userSavedCart));
+        } catch (e) {
+          setCart([]);
+        }
+      }
+    }
+
     return { success: true };
   };
 
@@ -426,6 +567,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setUsers((prev) => [newUser, ...prev]);
     setCurrentUser(newUser);
+    setCart([]);
     closeAuthModal();
 
     if (isSupabaseConfigured()) {
@@ -440,6 +582,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const logout = () => {
     setCurrentUser(null);
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    // Regra: Limpar carrinho ao deslogar da conta
+    setCart([]);
+    localStorage.removeItem(STORAGE_KEYS.CART);
     // Se o usuário estava em aba administrativa restrita, redireciona para a home
     if (activeTab === 'admin-stock' || activeTab === 'admin-users' || activeTab === 'admin-orders') {
       setActiveTab('home');
@@ -499,18 +644,86 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  // Funções de Gestão de Pedidos (Admin)
-  const updateOrder = (orderId: string, updatedData: Partial<Order>) => {
-    if (isSupabaseConfigured()) {
-      updateOrderInSupabase(orderId, updatedData).catch((e) =>
-        console.warn('Falha ao atualizar pedido no Supabase:', e)
-      );
-    }
+  // Funções de Gestão de Pedidos (Admin & Cliente)
+  const updateOrder = (
+    orderId: string,
+    updatedData: Partial<Order>,
+    contextAuthor?: { role?: 'admin' | 'customer' | 'system'; name?: string; notes?: string }
+  ) => {
+    let orderToSync: Order | undefined;
 
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id !== orderId) return order;
-        const merged = { ...order, ...updatedData };
+
+        const isStatusChanging = updatedData.status !== undefined && updatedData.status !== order.status;
+        let nextStatusHistory: OrderStatusHistoryItem[] = order.statusHistory ? [...order.statusHistory] : [];
+
+        // Garante que o pedido tenha um histórico inicial documentado caso tenha sido criado sem ele
+        if (nextStatusHistory.length === 0) {
+          nextStatusHistory.push({
+            id: `sh-${order.id}-init`,
+            fromStatus: 'Novo Pedido',
+            status: order.status,
+            timestamp: new Date().toISOString(),
+            formattedDate: order.date || new Date().toLocaleString('pt-BR'),
+            updatedBy: 'system',
+            authorName: order.customerName || 'Cliente Florishop',
+            notes: 'Criação e registro do pedido',
+          });
+        }
+
+        if (isStatusChanging && updatedData.status) {
+          const newStatus = updatedData.status;
+          const authorRole = contextAuthor?.role || (isAdmin ? 'admin' : currentUser ? 'customer' : 'admin');
+          const authorName =
+            contextAuthor?.name ||
+            (authorRole === 'admin'
+              ? 'Administrador Florishop'
+              : currentUser?.name || order.customerName || 'Cliente Florishop');
+
+          let defaultNote = `Status alterado de "${order.status}" para "${newStatus}"`;
+          if (newStatus === 'Aguardando Pagamento') {
+            defaultNote = 'Aguardando confirmação de pagamento';
+          } else if (newStatus === 'Aguardando Comprovante / Validação') {
+            defaultNote = 'Aguardando conferência do comprovante de depósito bancário';
+          } else if (newStatus === 'Pago / Aprovado') {
+            defaultNote = 'Pagamento confirmado com sucesso!';
+          } else if (newStatus === 'Em Separação') {
+            defaultNote = 'Pedido encaminhado para conferência física e embalagem';
+          } else if (newStatus === 'Enviado') {
+            const track = updatedData.trackingCode || order.trackingCode;
+            defaultNote = track
+              ? `Pedido despachado via transportadora. Código de Rastreio: ${track}`
+              : 'Pedido despachado para entrega';
+          } else if (newStatus === 'Entregue') {
+            defaultNote = 'Pedido entregue no destino final e concluído com sucesso';
+          } else if (newStatus === 'Cancelado') {
+            defaultNote = 'Pedido cancelado e movido para o histórico';
+          }
+
+          const historyRecord: OrderStatusHistoryItem = {
+            id: `sh-${order.id}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            fromStatus: order.status,
+            status: newStatus,
+            timestamp: new Date().toISOString(),
+            formattedDate: new Date().toLocaleString('pt-BR'),
+            updatedBy: authorRole,
+            authorName,
+            notes: contextAuthor?.notes || defaultNote,
+          };
+
+          nextStatusHistory.push(historyRecord);
+        }
+
+        const merged: Order = {
+          ...order,
+          ...updatedData,
+          statusHistory: nextStatusHistory,
+          deliveredAt: updatedData.status === 'Entregue' ? (order.deliveredAt || new Date().toISOString()) : order.deliveredAt,
+          canceledAt: updatedData.status === 'Cancelado' ? (order.canceledAt || new Date().toISOString()) : order.canceledAt,
+        };
+
         // Recalcular totais se itens, shippingCost ou interest foram alterados
         if (updatedData.items || updatedData.shippingCost !== undefined || updatedData.interest !== undefined) {
           const subtotal = merged.items.reduce(
@@ -525,8 +738,97 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           merged.discount = discount;
           merged.total = total;
         }
+
+        orderToSync = merged;
         return merged;
       })
+    );
+
+    if (isSupabaseConfigured() && orderToSync) {
+      updateOrderInSupabase(orderId, {
+        ...updatedData,
+        statusHistory: orderToSync.statusHistory,
+        deliveredAt: orderToSync.deliveredAt,
+        canceledAt: orderToSync.canceledAt,
+      }).catch((e) =>
+        console.warn('Falha ao atualizar pedido no Supabase:', e)
+      );
+    }
+
+    // Se o pedido passou para status 'Entregue', arquivar automaticamente na tabela de histórico de compras
+    if (orderToSync && orderToSync.status === 'Entregue') {
+      recordPurchaseHistory(orderToSync, contextAuthor?.notes);
+    }
+  };
+
+  const recordPurchaseHistory = async (order: Order, notes?: string) => {
+    const historyId = `uph-${order.id}`;
+    const record: UserPurchaseHistoryRecord = {
+      id: historyId,
+      userId: order.userId || (currentUser?.id ?? `user-${order.customerEmail}`),
+      orderId: order.id,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      completedAt: order.deliveredAt || new Date().toISOString(),
+      orderDate: order.date,
+      total: order.total,
+      subtotal: order.subtotal,
+      shippingCost: order.shippingCost || 0,
+      shippingMethod: order.shippingMethod,
+      paymentMethod: order.paymentMethod,
+      itemsCount: order.items.reduce((sum, it) => sum + it.quantity, 0),
+      items: order.items,
+      trackingCode: order.trackingCode,
+      deliveryNotes: notes || order.adminNotes,
+      status: 'Entregue',
+      createdAt: new Date().toISOString(),
+    };
+
+    setUserPurchaseHistory((prev) => {
+      const filtered = prev.filter((h) => h.orderId !== order.id && h.id !== historyId);
+      return [record, ...filtered];
+    });
+
+    if (isSupabaseConfigured()) {
+      try {
+        await upsertPurchaseHistoryInSupabase(record);
+      } catch (e) {
+        console.warn('Erro ao sincronizar compra com tabela user_purchase_history no Supabase:', e);
+      }
+    }
+  };
+
+  const getUserPurchaseHistory = (userIdOrEmail?: string): UserPurchaseHistoryRecord[] => {
+    if (!userIdOrEmail) {
+      if (!currentUser) return [];
+      if (currentUser.role === 'admin') return userPurchaseHistory;
+      const cleanEmail = currentUser.email.toLowerCase().trim();
+      return userPurchaseHistory.filter(
+        (h) =>
+          h.userId === currentUser.id ||
+          h.customerEmail.toLowerCase().trim() === cleanEmail
+      );
+    }
+    const clean = userIdOrEmail.toLowerCase().trim();
+    return userPurchaseHistory.filter(
+      (h) => h.userId === userIdOrEmail || h.customerEmail.toLowerCase().trim() === clean
+    );
+  };
+
+  const confirmOrderDelivered = (orderId: string, customerNotes?: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) return;
+
+    updateOrder(
+      orderId,
+      { status: 'Entregue' },
+      {
+        role: 'customer',
+        name: currentUser?.name || targetOrder.customerName || 'Cliente Florishop',
+        notes: customerNotes
+          ? `Recebimento confirmado pelo cliente: "${customerNotes}"`
+          : 'Cliente confirmou o recebimento da encomenda no endereço de entrega.',
+      }
     );
   };
 
@@ -572,7 +874,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const cancelOrder = (orderId: string, reason?: string) => {
+  const cancelOrder = (orderId: string, reason?: string, canceledBy?: 'admin' | 'customer') => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder || targetOrder.status === 'Cancelado') return;
 
@@ -603,9 +905,40 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setStockMovements((prev) => [...returnMovements, ...prev]);
     }
 
+    const byWhom = canceledBy || (isAdmin ? 'admin' : 'customer');
+    const authorName =
+      byWhom === 'admin'
+        ? 'Administrador Florishop'
+        : (currentUser?.name || targetOrder.customerName || 'Cliente Florishop');
+
     const cancellationNote = reason
-      ? `Cancelado pelo cliente (${reason}) em ${new Date().toLocaleString('pt-BR')}`
-      : `Cancelado pelo cliente em ${new Date().toLocaleString('pt-BR')}`;
+      ? `Cancelado por ${authorName} (${reason}) em ${new Date().toLocaleString('pt-BR')}`
+      : `Cancelado por ${authorName} em ${new Date().toLocaleString('pt-BR')}`;
+
+    let nextHistory = targetOrder.statusHistory ? [...targetOrder.statusHistory] : [];
+    if (nextHistory.length === 0) {
+      nextHistory.push({
+        id: `sh-${targetOrder.id}-init`,
+        fromStatus: 'Novo Pedido',
+        status: targetOrder.status,
+        timestamp: new Date().toISOString(),
+        formattedDate: targetOrder.date || new Date().toLocaleString('pt-BR'),
+        updatedBy: 'system',
+        authorName: targetOrder.customerName,
+        notes: 'Criação do pedido',
+      });
+    }
+
+    nextHistory.push({
+      id: `sh-${targetOrder.id}-${Date.now()}-cancel`,
+      fromStatus: targetOrder.status,
+      status: 'Cancelado',
+      timestamp: new Date().toISOString(),
+      formattedDate: new Date().toLocaleString('pt-BR'),
+      updatedBy: byWhom,
+      authorName,
+      notes: reason ? `Motivo do cancelamento: ${reason}` : 'Pedido cancelado e movido para o histórico.',
+    });
 
     setOrders((prev) =>
       prev.map((order) => {
@@ -613,6 +946,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return {
           ...order,
           status: 'Cancelado',
+          statusHistory: nextHistory,
+          canceledAt: new Date().toISOString(),
           adminNotes: order.adminNotes ? `${order.adminNotes} | ${cancellationNote}` : cancellationNote,
         };
       })
@@ -621,6 +956,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (isSupabaseConfigured()) {
       updateOrderInSupabase(orderId, {
         status: 'Cancelado',
+        statusHistory: nextHistory,
+        canceledAt: new Date().toISOString(),
         adminNotes: targetOrder.adminNotes ? `${targetOrder.adminNotes} | ${cancellationNote}` : cancellationNote,
       }).catch((e) => console.warn('Falha ao atualizar cancelamento no Supabase:', e));
     }
@@ -637,7 +974,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setOrders(remoteOrders);
         return { success: true, count: remoteOrders.length };
       }
-      return { success: true, count: pushRes.syncedCount };
+      return { success: true, count: pushRes.success };
     } catch (e: any) {
       return { success: false, count: 0, error: e?.message || 'Falha ao sincronizar pedidos com o Supabase' };
     }
@@ -839,6 +1176,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addToCart = (product: Product, quantity = 1, selectedSize?: string) => {
+    // Regra: A conta de administrador não deve ter carrinho de compras
+    if (currentUser?.role === 'admin') {
+      alert('Contas de administrador gerenciam o estoque e pedidos pelo painel e não realizam compras pelo carrinho.');
+      return;
+    }
+
+    // Regra: Só deve adicionar ao carrinho se estiver logado na conta
+    if (!currentUser) {
+      openAuthModal('login');
+      return;
+    }
+
     setCart((prevCart) => {
       const existing = prevCart.find(
         (item) => item.product.id === product.id && item.selectedSize === selectedSize
@@ -879,6 +1228,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearCart = () => {
     setCart([]);
+    localStorage.removeItem(STORAGE_KEYS.CART);
+    if (currentUser) {
+      localStorage.removeItem(`florishop_cart_${currentUser.id}`);
+    }
   };
 
   const processCheckout = (
@@ -946,6 +1299,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       customerEmail: customerEmail || currentUser?.email || 'skater@florishop.com.br',
       status,
     };
+
+    const initialHistoryItem: OrderStatusHistoryItem = {
+      id: `sh-${newOrder.id}-${Date.now()}`,
+      fromStatus: 'Novo Pedido',
+      status,
+      timestamp: new Date().toISOString(),
+      formattedDate: new Date().toLocaleString('pt-BR'),
+      updatedBy: currentUser ? 'customer' : 'system',
+      authorName: customerName || currentUser?.name || 'Cliente Florishop',
+      notes: paymentMethod === 'pix'
+        ? 'Pedido aprovado instantaneamente via PIX'
+        : paymentMethod === 'deposito'
+        ? 'Aguardando conferência do comprovante de depósito bancário'
+        : 'Pedido realizado - Pagamento a combinar na entrega/retirada',
+    };
+    newOrder.statusHistory = [initialHistoryItem];
 
     // Deduct stock for each product in cart
     setProducts((prevProducts) =>
@@ -1138,6 +1507,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         products,
         cart,
         orders,
+        userPurchaseHistory,
         stockMovements,
         featuredConfig,
         users,
@@ -1170,6 +1540,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateOrder,
         deleteOrder,
         cancelOrder,
+        confirmOrderDelivered,
+        recordPurchaseHistory,
+        getUserPurchaseHistory,
         syncOrdersWithSupabase,
         addItemToOrder,
         removeItemFromOrder,

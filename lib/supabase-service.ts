@@ -1,5 +1,5 @@
 import { getSupabaseClient, isSupabaseConfigured, extractCleanSupabaseUrl } from './supabase';
-import { Product, Order, User, StockMovement, FeaturedMonthConfig } from './skate-store';
+import { Product, Order, User, StockMovement, FeaturedMonthConfig, UserPurchaseHistoryRecord } from './skate-store';
 
 export interface SupabaseHealthCheck {
   isConfigured: boolean;
@@ -11,7 +11,32 @@ export interface SupabaseHealthCheck {
     orders: boolean;
     users: boolean;
     stock_movements: boolean;
+    user_purchase_history: boolean;
   };
+}
+
+// Controle em memória para evitar requisições repetidas se a tabela ainda não existir no Supabase
+let isPurchaseHistoryTableAvailable: boolean | null = null;
+
+export function isTableMissingError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const message = String(error.message || '');
+  return (
+    code === 'PGRST205' ||
+    code === '42P01' ||
+    message.toLowerCase().includes('user_purchase_history') ||
+    message.toLowerCase().includes('schema cache') ||
+    message.toLowerCase().includes('does not exist')
+  );
+}
+
+export function setPurchaseHistoryTableAvailable(available: boolean) {
+  isPurchaseHistoryTableAvailable = available;
+}
+
+export function getPurchaseHistoryTableAvailable(): boolean | null {
+  return isPurchaseHistoryTableAvailable;
 }
 
 /**
@@ -56,6 +81,17 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
       .select('id')
       .limit(1);
 
+    const { error: historyError } = await client
+      .from('user_purchase_history')
+      .select('id')
+      .limit(1);
+
+    if (historyError && isTableMissingError(historyError)) {
+      isPurchaseHistoryTableAvailable = false;
+    } else if (!historyError) {
+      isPurchaseHistoryTableAvailable = true;
+    }
+
     const hasAccess = !prodError;
 
     return {
@@ -68,6 +104,7 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
         orders: !orderError,
         users: !userError,
         stock_movements: !stockError,
+        user_purchase_history: !historyError,
       },
     };
   } catch (err: any) {
@@ -248,6 +285,13 @@ export async function createOrderInSupabase(order: Order): Promise<{ success: bo
     }
 
     // 3. Inserir registro principal do pedido
+    const paymentDetailsWithHistory = {
+      ...(order.paymentDetails || {}),
+      statusHistory: order.statusHistory || [],
+      deliveredAt: order.deliveredAt || null,
+      canceledAt: order.canceledAt || null,
+    };
+
     const { error: orderError } = await client.from('orders').upsert({
       id: order.id,
       user_id: validUserId,
@@ -260,7 +304,7 @@ export async function createOrderInSupabase(order: Order): Promise<{ success: bo
       shipping_address: order.shippingAddress || {},
       total: Number(order.total) || 0,
       payment_method: order.paymentMethod,
-      payment_details: order.paymentDetails || {},
+      payment_details: paymentDetailsWithHistory,
       customer_name: order.customerName,
       customer_email: order.customerEmail,
       customer_phone: order.customerPhone || null,
@@ -366,7 +410,7 @@ export async function fetchOrdersFromSupabase(): Promise<Order[] | null> {
         product: {
           id: it.product_id || `prod-${it.id}`,
           name: it.product_name,
-          category: 'Skate',
+          category: 'Acessórios' as Product['category'],
           brand: 'Florishop',
           sku: it.product_sku || '',
           purchasePrice: 0,
@@ -384,6 +428,22 @@ export async function fetchOrdersFromSupabase(): Promise<Order[] | null> {
         isGift: Boolean(it.is_gift),
         customNote: it.custom_note || undefined,
       }));
+
+      const statusHistory =
+        row.status_history ||
+        row.payment_details?.statusHistory ||
+        [
+          {
+            id: `sh-${row.id}-init`,
+            fromStatus: 'Novo Pedido',
+            status: row.status || 'Aguardando Pagamento',
+            timestamp: row.date || new Date().toISOString(),
+            formattedDate: formattedDate,
+            updatedBy: 'system',
+            authorName: 'Sistema Florishop',
+            notes: 'Registro inicial do pedido',
+          },
+        ];
 
       return {
         id: row.id,
@@ -405,6 +465,9 @@ export async function fetchOrdersFromSupabase(): Promise<Order[] | null> {
         status: row.status,
         adminNotes: row.admin_notes || undefined,
         trackingCode: row.tracking_code || undefined,
+        statusHistory,
+        deliveredAt: row.delivered_at || row.payment_details?.deliveredAt || undefined,
+        canceledAt: row.canceled_at || row.payment_details?.canceledAt || undefined,
       };
     });
   } catch (e) {
@@ -414,7 +477,7 @@ export async function fetchOrdersFromSupabase(): Promise<Order[] | null> {
 }
 
 /**
- * Atualiza status, rastreio ou notas de um pedido no Supabase
+ * Atualiza status, rastreio, histórico ou notas de um pedido no Supabase
  */
 export async function updateOrderInSupabase(
   orderId: string,
@@ -435,6 +498,40 @@ export async function updateOrderInSupabase(
     if (updates.shippingAddress !== undefined) payload.shipping_address = updates.shippingAddress;
     if (updates.total !== undefined) payload.total = updates.total;
     if (updates.subtotal !== undefined) payload.subtotal = updates.subtotal;
+
+    if (
+      updates.statusHistory !== undefined ||
+      updates.deliveredAt !== undefined ||
+      updates.canceledAt !== undefined ||
+      updates.paymentDetails !== undefined
+    ) {
+      try {
+        const { data: cur } = await client
+          .from('orders')
+          .select('payment_details')
+          .eq('id', orderId)
+          .maybeSingle();
+
+        const basePayment = {
+          ...(cur?.payment_details || {}),
+          ...(updates.paymentDetails || {}),
+        };
+
+        if (updates.statusHistory !== undefined) {
+          basePayment.statusHistory = updates.statusHistory;
+        }
+        if (updates.deliveredAt !== undefined) {
+          basePayment.deliveredAt = updates.deliveredAt;
+        }
+        if (updates.canceledAt !== undefined) {
+          basePayment.canceledAt = updates.canceledAt;
+        }
+
+        payload.payment_details = basePayment;
+      } catch (e) {
+        console.warn('[Supabase] Falha ao ler payment_details para mesclar histórico:', e);
+      }
+    }
 
     const { error } = await client.from('orders').update(payload).eq('id', orderId);
     if (error) {
@@ -659,5 +756,192 @@ export async function syncInitialDataToSupabaseIfEmpty(
   } catch (e) {
     console.error('Falha na sincronização inicial com Supabase:', e);
     return { synced: false, productCount: 0, userCount: 0 };
+  }
+}
+
+/**
+ * Registra ou atualiza um pedido no histórico de compras do usuário no Supabase (tabela user_purchase_history)
+ */
+export async function upsertPurchaseHistoryInSupabase(
+  record: UserPurchaseHistoryRecord
+): Promise<{ success: boolean; tableMissing?: boolean; error?: string }> {
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não configurado' };
+  }
+
+  // Se já foi detectado que a tabela não existe no banco remoto, evita novas tentativas com erro
+  if (isPurchaseHistoryTableAvailable === false) {
+    return {
+      success: false,
+      tableMissing: true,
+      error: 'Tabela user_purchase_history ainda não criada no banco Supabase (dados mantidos no armazenamento local)',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, error: 'Cliente Supabase indisponível' };
+  }
+
+  try {
+    const payload = {
+      id: record.id,
+      user_id: record.userId,
+      order_id: record.orderId,
+      customer_name: record.customerName,
+      customer_email: record.customerEmail,
+      completed_at: record.completedAt || new Date().toISOString(),
+      order_date: record.orderDate || new Date().toISOString(),
+      total: Number(record.total) || 0,
+      subtotal: Number(record.subtotal) || 0,
+      shipping_cost: Number(record.shippingCost) || 0,
+      shipping_method: record.shippingMethod || null,
+      payment_method: record.paymentMethod,
+      items_count: record.itemsCount || record.items?.length || 1,
+      items: record.items || [],
+      tracking_code: record.trackingCode || null,
+      delivery_notes: record.deliveryNotes || null,
+      status: record.status || 'Entregue',
+    };
+
+    const { error } = await client
+      .from('user_purchase_history')
+      .upsert(payload, { onConflict: 'id' });
+
+    if (error) {
+      if (isTableMissingError(error)) {
+        isPurchaseHistoryTableAvailable = false;
+        console.warn(
+          '[Supabase] Informação: A tabela "public.user_purchase_history" ainda não foi criada no banco de dados Supabase (PGRST205). O histórico foi salvo e mantido com segurança no armazenamento local (localStorage). Para criá-la no Supabase, basta executar a migration SQL em Administração > Conexão Supabase.'
+        );
+        return { success: false, tableMissing: true, error: error.message };
+      }
+      console.warn('[Supabase] Aviso ao registrar histórico de compras no Supabase:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    isPurchaseHistoryTableAvailable = true;
+    console.log(`[Supabase] Histórico de compras sincronizado para o pedido #${record.orderId}`);
+    return { success: true };
+  } catch (e: any) {
+    if (isTableMissingError(e)) {
+      isPurchaseHistoryTableAvailable = false;
+      return { success: false, tableMissing: true, error: e?.message };
+    }
+    console.warn('[Supabase] Aviso ao tentar sincronizar histórico de compras:', e?.message || e);
+    return { success: false, error: e?.message || 'Erro inesperado' };
+  }
+}
+
+/**
+ * Consulta o histórico de compras de um usuário específico (pelo ID ou e-mail)
+ */
+export async function fetchUserPurchaseHistoryFromSupabase(
+  userIdOrEmail: string
+): Promise<UserPurchaseHistoryRecord[]> {
+  if (!isSupabaseConfigured()) return [];
+  if (isPurchaseHistoryTableAvailable === false) return [];
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const cleanParam = userIdOrEmail.trim().toLowerCase();
+    const { data, error } = await client
+      .from('user_purchase_history')
+      .select('*')
+      .or(`user_id.eq.${userIdOrEmail},customer_email.ilike.${cleanParam}`)
+      .order('completed_at', { ascending: false });
+
+    if (error) {
+      if (isTableMissingError(error)) {
+        isPurchaseHistoryTableAvailable = false;
+        return [];
+      }
+      console.warn('[Supabase] Aviso ao buscar user_purchase_history:', error.message);
+      return [];
+    }
+
+    isPurchaseHistoryTableAvailable = true;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      orderId: row.order_id,
+      customerName: row.customer_name,
+      customerEmail: row.customer_email,
+      completedAt: row.completed_at,
+      orderDate: row.order_date,
+      total: Number(row.total) || 0,
+      subtotal: Number(row.subtotal) || 0,
+      shippingCost: Number(row.shipping_cost) || 0,
+      shippingMethod: row.shipping_method,
+      paymentMethod: row.payment_method,
+      itemsCount: row.items_count,
+      items: row.items || [],
+      trackingCode: row.tracking_code,
+      deliveryNotes: row.delivery_notes,
+      status: row.status || 'Entregue',
+      createdAt: row.created_at,
+    }));
+  } catch (e: any) {
+    if (isTableMissingError(e)) {
+      isPurchaseHistoryTableAvailable = false;
+      return [];
+    }
+    console.warn('[Supabase] Aviso ao consultar histórico no Supabase:', e?.message || e);
+    return [];
+  }
+}
+
+/**
+ * Consulta todo o histórico global de compras finalizadas (para painel administrativo)
+ */
+export async function fetchAllPurchaseHistoryFromSupabase(): Promise<UserPurchaseHistoryRecord[]> {
+  if (!isSupabaseConfigured()) return [];
+  if (isPurchaseHistoryTableAvailable === false) return [];
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('user_purchase_history')
+      .select('*')
+      .order('completed_at', { ascending: false });
+
+    if (error) {
+      if (isTableMissingError(error)) {
+        isPurchaseHistoryTableAvailable = false;
+        return [];
+      }
+      console.warn('[Supabase] Aviso ao buscar todo o user_purchase_history:', error.message);
+      return [];
+    }
+
+    isPurchaseHistoryTableAvailable = true;
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      orderId: row.order_id,
+      customerName: row.customer_name,
+      customerEmail: row.customer_email,
+      completedAt: row.completed_at,
+      orderDate: row.order_date,
+      total: Number(row.total) || 0,
+      subtotal: Number(row.subtotal) || 0,
+      shippingCost: Number(row.shipping_cost) || 0,
+      shippingMethod: row.shipping_method,
+      paymentMethod: row.payment_method,
+      itemsCount: row.items_count,
+      items: row.items || [],
+      trackingCode: row.tracking_code,
+      deliveryNotes: row.delivery_notes,
+      status: row.status || 'Entregue',
+      createdAt: row.created_at,
+    }));
+  } catch (e: any) {
+    if (isTableMissingError(e)) {
+      isPurchaseHistoryTableAvailable = false;
+      return [];
+    }
+    return [];
   }
 }

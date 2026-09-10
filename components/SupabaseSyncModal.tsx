@@ -44,6 +44,44 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({ isOpen, on
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [copiedMigration, setCopiedMigration] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
+  const [copiedHistorySql, setCopiedHistorySql] = useState(false);
+
+  const historyTableSql = `-- ==============================================================================
+-- FLORISHOP SKATE SHOP: TABELA user_purchase_history (HISTÓRICO PERMANENTE)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.user_purchase_history (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    customer_email TEXT NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    order_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    subtotal NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    shipping_cost NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    shipping_method TEXT,
+    payment_method TEXT NOT NULL,
+    items_count INTEGER NOT NULL DEFAULT 1,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tracking_code TEXT,
+    delivery_notes TEXT,
+    status TEXT NOT NULL DEFAULT 'Entregue',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_history_user_id ON public.user_purchase_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_history_order_id ON public.user_purchase_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_history_completed_at ON public.user_purchase_history(completed_at DESC);
+
+ALTER TABLE public.user_purchase_history ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Histórico de compras público" ON public.user_purchase_history;
+CREATE POLICY "Histórico de compras público" ON public.user_purchase_history FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Gestão histórico de compras" ON public.user_purchase_history;
+CREATE POLICY "Gestão histórico de compras" ON public.user_purchase_history FOR ALL USING (true) WITH CHECK (true);
+`;
 
   const migrationCode = `-- ==============================================================================
 -- MIGRATION: 20260907000000_initial_schema.sql
@@ -198,13 +236,40 @@ CREATE TABLE IF NOT EXISTS public.featured_config (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 7. ROW LEVEL SECURITY (RLS)
+-- 7. TABELA DE HISTÓRICO DE COMPRAS DE USUÁRIO
+CREATE TABLE IF NOT EXISTS public.user_purchase_history (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    customer_email TEXT NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    order_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    subtotal NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    shipping_cost NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    shipping_method TEXT,
+    payment_method TEXT NOT NULL,
+    items_count INTEGER NOT NULL DEFAULT 1,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tracking_code TEXT,
+    delivery_notes TEXT,
+    status TEXT NOT NULL DEFAULT 'Entregue',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_history_user_id ON public.user_purchase_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_history_order_id ON public.user_purchase_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_history_completed_at ON public.user_purchase_history(completed_at DESC);
+
+-- 8. ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.featured_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_purchase_history ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Produtos públicos" ON public.products FOR SELECT USING (true);
 CREATE POLICY "Gestão produtos" ON public.products FOR ALL USING (true) WITH CHECK (true);
@@ -216,7 +281,9 @@ CREATE POLICY "Leitura de pedidos" ON public.orders FOR SELECT USING (true);
 CREATE POLICY "Edição de pedidos" ON public.orders FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Leitura de itens" ON public.order_items FOR SELECT USING (true);
 CREATE POLICY "Edição de itens" ON public.order_items FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Gestão estoque" ON public.stock_movements FOR ALL USING (true) WITH CHECK (true);`;
+CREATE POLICY "Gestão estoque" ON public.stock_movements FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Histórico de compras público" ON public.user_purchase_history FOR SELECT USING (true);
+CREATE POLICY "Gestão histórico de compras" ON public.user_purchase_history FOR ALL USING (true) WITH CHECK (true);`;
 
   const seedCode = `-- Inserção de Usuários Padrão
 INSERT INTO public.users (id, name, email, password_hash, phone, cpf, role, status, address)
@@ -483,17 +550,27 @@ SET slot1 = EXCLUDED.slot1, slot2 = EXCLUDED.slot2, slot3 = EXCLUDED.slot3, upda
                     { name: 'order_items', label: 'Itens do Pedido' },
                     { name: 'stock_movements', label: 'Movimentações de Estoque' },
                     { name: 'featured_config', label: 'Destaques do Mês' },
+                    { name: 'user_purchase_history', label: 'Histórico de Compras' },
                   ].map((table) => {
-                    const ok = health?.connected;
+                    const tableKey = table.name as keyof NonNullable<typeof health>['tables'];
+                    const exists = health?.tables ? health.tables[tableKey] : health?.connected;
                     return (
                       <div
                         key={table.name}
-                        className="p-3 bg-[#111] rounded border border-[#282727] flex flex-col justify-between gap-1"
+                        className={`p-3 rounded border flex flex-col justify-between gap-1 transition-colors ${
+                          exists === false
+                            ? 'bg-amber-950/20 border-amber-800/40'
+                            : 'bg-[#111] border-[#282727]'
+                        }`}
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-white">{table.name}</span>
-                          {ok ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                          {exists ? (
+                            <span className="flex items-center gap-1 text-[10px] text-[#3ecf8e] font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#3ecf8e]" /> Ativa
+                            </span>
+                          ) : health?.connected ? (
+                            <span className="text-[10px] text-amber-400 font-bold">Pendente SQL</span>
                           ) : (
                             <span className="text-[10px] text-gray-500">Pronta p/ Migrar</span>
                           )}
@@ -503,6 +580,34 @@ SET slot1 = EXCLUDED.slot1, slot2 = EXCLUDED.slot2, slot3 = EXCLUDED.slot3, upda
                     );
                   })}
                 </div>
+
+                {/* Banner de Ajuda quando a tabela user_purchase_history está pendente */}
+                {health?.connected && health.tables?.user_purchase_history === false && (
+                  <div className="mt-4 p-4 rounded border border-amber-800/60 bg-amber-950/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-amber-300 block">
+                          Tabela &quot;user_purchase_history&quot; pendente no Supabase (PGRST205)
+                        </span>
+                        <span className="text-gray-300 text-[11px]">
+                          Seus históricos de compra estão salvos e operando no armazenamento local (localStorage). Para sincronizar no banco remoto, execute este script SQL no Supabase:
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(historyTableSql);
+                        setCopiedHistorySql(true);
+                        setTimeout(() => setCopiedHistorySql(false), 3000);
+                      }}
+                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold uppercase rounded text-[11px] flex items-center gap-1.5 shrink-0 transition-colors shadow-sm"
+                    >
+                      {copiedHistorySql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedHistorySql ? 'SQL Copiado!' : 'Copiar SQL do Histórico'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Sincronização */}

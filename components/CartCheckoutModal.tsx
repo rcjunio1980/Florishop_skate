@@ -390,6 +390,68 @@ export const CartCheckoutModal: React.FC = () => {
     }
   };
 
+  // Regra 1: Administradores não possuem carrinho de compras
+  if (currentUser?.role === 'admin') {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+        <div className="bg-[#1c1b1b] border-2 border-[#5c403c] p-10 rounded-lg shadow-xl">
+          <ShieldAlert className="w-16 h-16 text-[#ff544b] mx-auto mb-4" />
+          <h2 className="font-display text-2xl md:text-3xl font-extrabold text-white uppercase mb-3">
+            Acesso Restrito ao Painel Administrativo
+          </h2>
+          <p className="font-sans text-sm text-gray-300 max-w-lg mx-auto mb-8">
+            Contas com perfil de <strong className="text-[#ffb4ab]">Administrador</strong> gerenciam o estoque, pedidos e catálogo diretamente pelos módulos administrativos e não possuem carrinho de compras de cliente.
+          </p>
+          <div className="flex flex-wrap gap-4 justify-center">
+            <button
+              onClick={() => setActiveTab('admin-stock')}
+              className="px-6 py-3 bg-[#ff544b] text-white font-mono font-bold text-xs uppercase tracking-wider hover:bg-white hover:text-black transition-colors rounded shadow"
+            >
+              Gestão de Estoque
+            </button>
+            <button
+              onClick={() => setActiveTab('admin-orders')}
+              className="px-6 py-3 bg-[#201f1f] border border-[#ff544b] text-[#ffb4ab] font-mono font-bold text-xs uppercase tracking-wider hover:bg-[#ff544b] hover:text-white transition-colors rounded"
+            >
+              Gestão de Pedidos
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Regra 2: Carrinho só aparece conteúdo quando estiver logado na conta
+  if (!isLoggedIn && step !== 'confirmation') {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+        <div className="bg-[#181717] border border-[#353534] p-12 rounded-lg">
+          <LogIn className="w-16 h-16 text-[#ff544b] mx-auto mb-4 opacity-90" />
+          <h2 className="font-display text-3xl font-extrabold text-white uppercase mb-2">
+            Faça Login para Acessar seu Carrinho
+          </h2>
+          <p className="font-sans text-sm text-gray-400 max-w-md mx-auto mb-8">
+            O carrinho de compras é exclusivo para usuários conectados. Faça login ou crie sua conta para salvar seus itens e finalizar seus pedidos.
+          </p>
+          <div className="flex flex-wrap gap-4 justify-center">
+            <button
+              onClick={() => openAuthModal('login')}
+              className="px-8 py-3 bg-[#ff544b] text-white font-mono font-bold text-xs uppercase tracking-wider hover:bg-white hover:text-black transition-colors rounded shadow"
+            >
+              Entrar na Minha Conta
+            </button>
+            <button
+              onClick={() => setActiveTab('catalog')}
+              className="px-8 py-3 bg-[#201f1f] border border-[#353534] text-gray-300 font-mono font-bold text-xs uppercase tracking-wider hover:border-[#ff544b] hover:text-white transition-colors rounded"
+            >
+              Ver Catálogo de Skates
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (cart.length === 0 && step !== 'confirmation') {
     return (
       <div className="max-w-4xl mx-auto px-4 py-20 text-center">

@@ -47,6 +47,17 @@ export interface User {
   };
 }
 
+export interface OrderStatusHistoryItem {
+  id: string;
+  fromStatus?: Order['status'] | string;
+  status: Order['status'];
+  timestamp: string; // ISO format
+  formattedDate: string; // Data legível pt-BR
+  updatedBy: 'admin' | 'customer' | 'system';
+  authorName: string;
+  notes?: string;
+}
+
 export interface Order {
   id: string;
   userId?: string;
@@ -74,6 +85,7 @@ export interface Order {
     cardInterestRate?: number;
     receiptAttached?: boolean;
     receiptName?: string;
+    statusHistory?: OrderStatusHistoryItem[];
   };
   customerName: string;
   customerEmail: string;
@@ -81,6 +93,30 @@ export interface Order {
   status: 'Aguardando Pagamento' | 'Pago / Aprovado' | 'Em Separação' | 'Enviado' | 'Entregue' | 'Cancelado' | 'Aguardando Comprovante / Validação';
   adminNotes?: string;
   trackingCode?: string;
+  statusHistory?: OrderStatusHistoryItem[];
+  deliveredAt?: string;
+  canceledAt?: string;
+}
+
+export interface UserPurchaseHistoryRecord {
+  id: string;
+  userId: string;
+  orderId: string;
+  customerName: string;
+  customerEmail: string;
+  completedAt: string;
+  orderDate: string;
+  total: number;
+  subtotal: number;
+  shippingCost: number;
+  shippingMethod?: string;
+  paymentMethod: PaymentMethod;
+  itemsCount: number;
+  items: CartItem[];
+  trackingCode?: string;
+  deliveryNotes?: string;
+  status: 'Entregue';
+  createdAt?: string;
 }
 
 export interface StockMovement {
@@ -755,6 +791,38 @@ export const INITIAL_ORDERS: Order[] = [
     status: 'Em Separação',
     adminNotes: 'Cliente pediu para reforçar a embalagem do nose do deck.',
     trackingCode: 'BR492018245SC',
+    statusHistory: [
+      {
+        id: 'sh-849201-1',
+        fromStatus: 'Novo Pedido',
+        status: 'Aguardando Pagamento',
+        timestamp: '2026-03-05T14:22:10.000Z',
+        formattedDate: '05/03/2026, 14:22:10',
+        updatedBy: 'customer',
+        authorName: 'Lucas Gabriel',
+        notes: 'Pedido registrado na loja virtual via PIX',
+      },
+      {
+        id: 'sh-849201-2',
+        fromStatus: 'Aguardando Pagamento',
+        status: 'Pago / Aprovado',
+        timestamp: '2026-03-05T14:23:45.000Z',
+        formattedDate: '05/03/2026, 14:23:45',
+        updatedBy: 'system',
+        authorName: 'Sistema Financeiro PIX',
+        notes: 'Pagamento PIX liquidado instantaneamente',
+      },
+      {
+        id: 'sh-849201-3',
+        fromStatus: 'Pago / Aprovado',
+        status: 'Em Separação',
+        timestamp: '2026-03-05T15:10:00.000Z',
+        formattedDate: '05/03/2026, 15:10:00',
+        updatedBy: 'admin',
+        authorName: 'Administrador Florishop',
+        notes: 'Embalagem reforçada no nose solicitada pelo cliente',
+      },
+    ],
   },
   {
     id: 'FLO-710432',
@@ -795,6 +863,18 @@ export const INITIAL_ORDERS: Order[] = [
     customerPhone: '(48) 99123-8899',
     status: 'Aguardando Pagamento',
     adminNotes: 'Retirada agendada para sábado de manhã no Skatepark.',
+    statusHistory: [
+      {
+        id: 'sh-710432-1',
+        fromStatus: 'Novo Pedido',
+        status: 'Aguardando Pagamento',
+        timestamp: '2026-03-06T09:40:15.000Z',
+        formattedDate: '06/03/2026, 09:40:15',
+        updatedBy: 'customer',
+        authorName: 'Marina Costa',
+        notes: 'Pedido realizado para pagamento presencial na maquininha',
+      },
+    ],
   },
   {
     id: 'FLO-602188',
@@ -830,6 +910,28 @@ export const INITIAL_ORDERS: Order[] = [
     customerPhone: '(11) 97123-4567',
     status: 'Aguardando Comprovante / Validação',
     adminNotes: 'Aguardando compensação do depósito bancário para envio via SEDEX.',
+    statusHistory: [
+      {
+        id: 'sh-602188-1',
+        fromStatus: 'Novo Pedido',
+        status: 'Aguardando Pagamento',
+        timestamp: '2026-03-07T11:15:30.000Z',
+        formattedDate: '07/03/2026, 11:15:30',
+        updatedBy: 'customer',
+        authorName: 'Rodrigo Santos (Mineiro)',
+        notes: 'Pedido efetuado via Depósito Bancário',
+      },
+      {
+        id: 'sh-602188-2',
+        fromStatus: 'Aguardando Pagamento',
+        status: 'Aguardando Comprovante / Validação',
+        timestamp: '2026-03-07T11:25:00.000Z',
+        formattedDate: '07/03/2026, 11:25:00',
+        updatedBy: 'customer',
+        authorName: 'Rodrigo Santos (Mineiro)',
+        notes: 'Comprovante bancário anexado pelo cliente',
+      },
+    ],
   },
 ];
 

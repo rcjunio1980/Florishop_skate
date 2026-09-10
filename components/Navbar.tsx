@@ -341,19 +341,27 @@ export const Navbar: React.FC = () => {
             <PackageCheck className="w-5 h-5" />
           </button>
 
-          {/* Cart Icon */}
-          <button
-            onClick={() => setActiveTab('checkout')}
-            title="Ver Carrinho de Compras"
-            className="p-1.5 text-[#e5e2e1] hover:text-[#ff544b] transition-all relative"
-          >
-            <ShoppingCart className="w-5 h-5" />
-            {cartItemsCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-[#ff544b] text-white text-[10px] font-mono font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                {cartItemsCount}
-              </span>
-            )}
-          </button>
+          {/* Cart Icon: Exibido apenas para clientes; administradores não possuem carrinho de compras */}
+          {!isAdmin && (
+            <button
+              onClick={() => {
+                if (!isLoggedIn) {
+                  openAuthModal('login');
+                } else {
+                  setActiveTab('checkout');
+                }
+              }}
+              title={isLoggedIn ? 'Ver Carrinho de Compras' : 'Faça login para ver seu carrinho'}
+              className="p-1.5 text-[#e5e2e1] hover:text-[#ff544b] transition-all relative"
+            >
+              <ShoppingCart className="w-5 h-5" />
+              {isLoggedIn && cartItemsCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-[#ff544b] text-white text-[10px] font-mono font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                  {cartItemsCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Mobile Menu Toggle */}
           <button
