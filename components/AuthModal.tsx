@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useStore } from './StoreContext';
-import { X, Lock, Mail, User as UserIcon, Phone, MapPin, ShieldAlert, CheckCircle2, ArrowRight, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { X, Lock, Mail, User as UserIcon, Phone, MapPin, ShieldAlert, CheckCircle2, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { fetchAddressAndShipping } from '@/lib/shipping';
 
 export const AuthModal: React.FC = () => {
@@ -117,18 +117,6 @@ export const AuthModal: React.FC = () => {
     } else {
       setSuccessMessage('Conta criada com sucesso! Você já está conectado.');
     }
-  };
-
-  const fillQuickAdmin = () => {
-    setEmail('admin@florishop.com.br');
-    setPassword('admin123');
-    setErrorMessage('');
-  };
-
-  const fillQuickCustomer = () => {
-    setEmail('lucas.skater@gmail.com');
-    setPassword('skate123');
-    setErrorMessage('');
   };
 
   return (
@@ -297,33 +285,7 @@ export const AuthModal: React.FC = () => {
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Quick Demo Fillers for immediate testing */}
-              <div className="pt-3 border-t border-[#2d2c2c] space-y-2">
-                <span className="text-[10px] text-gray-500 uppercase tracking-wider block text-center">
-                  Contas de Demonstração Rápidas
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={fillQuickCustomer}
-                    className="flex-1 py-1.5 px-2 bg-[#201f1f] hover:bg-[#2d2c2c] border border-[#353534] text-gray-300 text-[11px] rounded text-center transition-colors"
-                  >
-                    🛹 Cliente (Lucas)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('admin-login');
-                      fillQuickAdmin();
-                    }}
-                    className="flex-1 py-1.5 px-2 bg-[#201f1f] hover:bg-[#2d2c2c] border border-[#353534] text-[#ffb4ab] text-[11px] rounded text-center transition-colors"
-                  >
-                    🛡️ Administrador
-                  </button>
-                </div>
-              </div>
-
-              <div className="text-center pt-1">
+              <div className="text-center pt-2">
                 <span className="text-gray-400 text-[11px]">Ainda não tem conta? </span>
                 <button
                   type="button"
@@ -584,23 +546,6 @@ export const AuthModal: React.FC = () => {
                 <Lock className="w-4 h-4" />
                 <span>Entrar como Administrador</span>
               </button>
-
-              <div className="pt-3 border-t border-[#2d2c2c] bg-[#1d1c1c] p-3 rounded">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-gray-400 font-bold">Credenciais de Teste Admin:</span>
-                  <button
-                    type="button"
-                    onClick={fillQuickAdmin}
-                    className="text-[11px] text-[#ff544b] hover:underline font-bold flex items-center gap-1"
-                  >
-                    <Sparkles className="w-3 h-3" />
-                    Preencher Automaticamente
-                  </button>
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1 font-mono">
-                  Login: <code className="text-white">admin@florishop.com.br</code> | Senha: <code className="text-white">admin123</code>
-                </p>
-              </div>
             </form>
           )}
         </div>

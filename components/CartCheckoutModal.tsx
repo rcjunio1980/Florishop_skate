@@ -1440,24 +1440,40 @@ export const CartCheckoutModal: React.FC = () => {
                     <strong className="text-lg text-[#ff544b]">R$ {finalTotal.toFixed(2)}</strong>
                   </div>
 
-                  <h4 className="font-mono text-xs font-bold text-white uppercase flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-[#ff544b]" />
-                    Contas para Depósito / Transferência:
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
-                    <div className="bg-[#131313] p-3 rounded border border-[#353534] space-y-1 text-gray-300">
-                      <strong className="text-white block border-b border-[#2a2a2a] pb-1">Banco do Brasil (001)</strong>
-                      <p>Agência: 0482-1</p>
-                      <p>Conta Corrente: 89412-5</p>
-                      <p>CNPJ: 49.821.000/0001-92</p>
+                  {/* WhatsApp Request for Bank Details */}
+                  <div className="bg-[#181717] p-4 rounded border-2 border-emerald-500/60 shadow-lg space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-emerald-500/10 rounded-full border border-emerald-500/30 text-emerald-400 shrink-0">
+                        <Phone className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-mono text-sm font-black text-emerald-400 uppercase tracking-wide">
+                          Para depósito ou transferência, solicite via WhatsApp
+                        </h4>
+                        <p className="font-sans text-xs text-gray-300">
+                          Entre em contato diretamente para receber os dados bancários atualizados com total segurança:
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="bg-[#131313] p-3 rounded border border-[#353534] space-y-1 text-gray-300">
-                      <strong className="text-white block border-b border-[#2a2a2a] pb-1">Banco Itaú (341)</strong>
-                      <p>Agência: 1205</p>
-                      <p>Conta Corrente: 45892-0</p>
-                      <p>Favorecido: Florishop Skate Ltda</p>
+                    <div className="bg-[#121212] p-3 rounded border border-[#2d2c2c] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs">
+                      <div>
+                        <span className="text-gray-400 block text-[11px]">Contato Oficial WhatsApp:</span>
+                        <strong className="text-base text-white font-bold tracking-wide">
+                          (11) 93229-9075
+                        </strong>
+                        <span className="text-gray-400 text-xs block">Falar com Thiago Floriano</span>
+                      </div>
+
+                      <a
+                        href={`https://wa.me/5511932299075?text=${encodeURIComponent(`Olá Thiago Floriano! Gostaria de solicitar os dados bancários para depósito/transferência do meu pedido na Florishop Skate no valor de R$ ${finalTotal.toFixed(2)}.`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase rounded text-xs flex items-center gap-2 transition-colors shrink-0"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        Chamar no WhatsApp
+                      </a>
                     </div>
                   </div>
 
