@@ -1,9 +1,25 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useStore } from './StoreContext';
 import { Product } from '@/lib/skate-store';
-import { ShoppingCart, Truck, ShieldCheck, ArrowLeft, Check, Plus, Minus, Share2, Search, MapPin, Loader2, Sparkles } from 'lucide-react';
+import {
+  ShoppingCart,
+  Truck,
+  ShieldCheck,
+  ArrowLeft,
+  Check,
+  Plus,
+  Minus,
+  Share2,
+  Search,
+  MapPin,
+  Loader2,
+  Sparkles,
+  ChevronLeft,
+  ChevronRight,
+  Image as ImageIcon
+} from 'lucide-react';
 import { fetchAddressAndShipping, cleanCep, formatCep, ShippingOption } from '@/lib/shipping';
 
 export const ProductDetailView: React.FC = () => {
@@ -22,6 +38,59 @@ export const ProductDetailView: React.FC = () => {
   const [userSelectedSize, setUserSelectedSize] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [addedToast, setAddedToast] = useState(false);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+
+  // Reset image index when product changes
+  useEffect(() => {
+    setActiveImageIndex(0);
+  }, [selectedProduct?.id]);
+
+  const images = useMemo(() => {
+    return selectedProduct?.images && selectedProduct.images.length > 0
+      ? selectedProduct.images
+      : ['https://lh3.googleusercontent.com/aida-public/AB6AXuDfAUZUZdE_GrI_XZ3Mw6u0nQfx_ifYFGi-mXy1Svr0jL1hT9lU0gSEya_n83GTj6al_pT23g00qj802qDXxR2jLtTSY-BWL2pqhez02cIHNhrSpWBuGcSNsE7J4Mum9Iq-a9Hk1wvqHrTm8T3gUYuRTY24xpZCSHnMClO6h4eRcHRO1GxGdFLyPi5JFcDzrWx80QKTgfp0GJv0X9xep4INPafQK9irO4-kHBMR8i3YnSzWJWaqejb16A'];
+  }, [selectedProduct?.images]);
+
+  const handlePrevImage = useCallback(() => {
+    if (!images || images.length <= 1) return;
+    setActiveImageIndex((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  }, [images]);
+
+  const handleNextImage = useCallback(() => {
+    if (!images || images.length <= 1) return;
+    setActiveImageIndex((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  }, [images]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (images.length <= 1) return;
+      if (e.key === 'ArrowLeft') {
+        handlePrevImage();
+      } else if (e.key === 'ArrowRight') {
+        handleNextImage();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [images.length, handlePrevImage, handleNextImage]);
+
+  // Touch swipe handling
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStartX(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartX - touchEndX;
+    if (diff > 45) {
+      handleNextImage();
+    } else if (diff < -45) {
+      handlePrevImage();
+    }
+    setTouchStartX(null);
+  };
 
   // Shipping calculator state
   const [cepInput, setCepInput] = useState(currentUser?.address?.cep || '');
@@ -75,10 +144,6 @@ export const ProductDetailView: React.FC = () => {
     );
   }
 
-  const images = selectedProduct.images && selectedProduct.images.length > 0
-    ? selectedProduct.images
-    : ['https://lh3.googleusercontent.com/aida-public/AB6AXuDfAUZUZdE_GrI_XZ3Mw6u0nQfx_ifYFGi-mXy1Svr0jL1hT9lU0gSEya_n83GTj6al_pT23g00qj802qDXxR2jLtTSY-BWL2pqhez02cIHNhrSpWBuGcSNsE7J4Mum9Iq-a9Hk1wvqHrTm8T3gUYuRTY24xpZCSHnMClO6h4eRcHRO1GxGdFLyPi5JFcDzrWx80QKTgfp0GJv0X9xep4INPafQK9irO4-kHBMR8i3YnSzWJWaqejb16A'];
-
   const handleAddToCart = () => {
     addToCart(selectedProduct, quantity, selectedSize);
     setAddedToast(true);
@@ -105,34 +170,113 @@ export const ProductDetailView: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 bg-[#181717] border border-[#353534] p-6 md:p-10 rounded">
         {/* Left Side: Photo Gallery */}
         <div className="flex flex-col gap-4">
-          {/* Main Selected Image */}
-          <div className="w-full h-[380px] md:h-[480px] bg-[#201f1f] border border-[#333] p-6 rounded flex items-center justify-center relative overflow-hidden group">
+          {/* Main Selected Image with Carousel Navigation */}
+          <div
+            className="w-full h-[380px] md:h-[480px] bg-[#201f1f] border border-[#333] p-6 rounded flex items-center justify-center relative overflow-hidden group select-none"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+          >
+            {/* Main Image */}
             <img
+              key={activeImageIndex}
               src={images[activeImageIndex] || images[0]}
-              alt={selectedProduct.name}
-              className="max-h-full max-w-full object-contain filter drop-shadow-2xl group-hover:scale-105 transition-transform duration-500"
+              alt={`${selectedProduct.name} - Foto ${activeImageIndex + 1}`}
+              className="max-h-full max-w-full object-contain filter drop-shadow-2xl group-hover:scale-105 transition-all duration-300 animate-fadeIn"
             />
+
+            {/* Badge */}
             {selectedProduct.badge && (
-              <span className="absolute top-4 left-4 bg-[#ff544b] text-white px-3 py-1 font-mono text-xs font-bold uppercase rounded">
+              <span className="absolute top-4 left-4 bg-[#ff544b] text-white px-3 py-1 font-mono text-xs font-bold uppercase rounded z-20 shadow-md">
                 {selectedProduct.badge}
               </span>
+            )}
+
+            {/* Multi-Photo Counter Badge */}
+            {images.length > 1 && (
+              <div className="absolute top-4 right-4 z-20 bg-black/75 backdrop-blur-sm border border-white/20 text-white font-mono text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-md pointer-events-none">
+                <ImageIcon className="w-3.5 h-3.5 text-[#ff544b]" />
+                <span>{activeImageIndex + 1} / {images.length}</span>
+              </div>
+            )}
+
+            {/* Previous Arrow Button */}
+            {images.length > 1 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrevImage();
+                }}
+                aria-label="Foto anterior"
+                title="Foto anterior (ou use a seta esquerda do teclado)"
+                className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/75 hover:bg-[#ff544b] text-white flex items-center justify-center backdrop-blur-sm border border-white/20 hover:border-[#ff544b] transition-all shadow-xl hover:scale-110 active:scale-95"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* Next Arrow Button */}
+            {images.length > 1 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNextImage();
+                }}
+                aria-label="Próxima foto"
+                title="Próxima foto (ou use a seta direita do teclado)"
+                className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/75 hover:bg-[#ff544b] text-white flex items-center justify-center backdrop-blur-sm border border-white/20 hover:border-[#ff544b] transition-all shadow-xl hover:scale-110 active:scale-95"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* Dot Indicators */}
+            {images.length > 1 && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-full border border-white/10">
+                {images.map((_, dotIdx) => (
+                  <button
+                    key={dotIdx}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveImageIndex(dotIdx);
+                    }}
+                    className={`h-2 rounded-full transition-all ${
+                      activeImageIndex === dotIdx
+                        ? 'w-5 bg-[#ff544b]'
+                        : 'w-2 bg-white/40 hover:bg-white/80'
+                    }`}
+                    aria-label={`Ir para foto ${dotIdx + 1}`}
+                  />
+                ))}
+              </div>
             )}
           </div>
 
           {/* Thumbnails Swatch */}
           {images.length > 1 && (
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {images.map((imgUrl, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActiveImageIndex(idx)}
-                  className={`w-20 h-20 bg-[#201f1f] border-2 rounded p-1 flex items-center justify-center flex-shrink-0 transition-all ${
-                    activeImageIndex === idx ? 'border-[#ff544b]' : 'border-[#333] opacity-60 hover:opacity-100'
-                  }`}
-                >
-                  <img src={imgUrl} alt={`Thumbnail ${idx}`} className="max-h-full max-w-full object-contain" />
-                </button>
-              ))}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center text-[11px] font-mono text-gray-400">
+                <span>Clique nas fotos abaixo ou use as setas para navegar:</span>
+                <span className="text-[#ff544b] font-bold">Foto {activeImageIndex + 1} de {images.length}</span>
+              </div>
+              <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
+                {images.map((imgUrl, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setActiveImageIndex(idx)}
+                    className={`w-20 h-20 bg-[#201f1f] border-2 rounded p-1.5 flex items-center justify-center flex-shrink-0 transition-all ${
+                      activeImageIndex === idx
+                        ? 'border-[#ff544b] shadow-lg shadow-[#ff544b]/20 scale-105'
+                        : 'border-[#333] opacity-60 hover:opacity-100 hover:border-gray-400'
+                    }`}
+                  >
+                    <img src={imgUrl} alt={`Miniatura ${idx + 1}`} className="max-h-full max-w-full object-contain" />
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

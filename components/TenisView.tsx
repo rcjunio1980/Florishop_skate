@@ -15,8 +15,97 @@ import {
   Sparkles,
   ArrowRight,
   HelpCircle,
-  Eye
+  Eye,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
+
+const ShoeCardMedia: React.FC<{
+  shoe: Product;
+  onOpenDetail: (p: Product) => void;
+}> = ({ shoe, onOpenDetail }) => {
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const images = shoe.images && shoe.images.length > 0 ? shoe.images : [shoe.images[0]];
+  const hasMultiple = images.length > 1;
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIdx((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  };
+
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIdx((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  return (
+    <div className="relative h-64 bg-[#121212] overflow-hidden flex items-center justify-center p-4 group/media select-none">
+      {shoe.badge && (
+        <span className="absolute top-3 left-3 bg-[#ff544b] text-white font-mono text-[10px] uppercase font-bold px-2 py-0.5 rounded z-10 shadow">
+          {shoe.badge}
+        </span>
+      )}
+
+      <span className="absolute top-3 right-3 bg-[#201f1f]/90 text-gray-300 border border-[#353534] font-mono text-[10px] px-2 py-0.5 rounded z-10 uppercase">
+        {shoe.brand}
+      </span>
+
+      {/* Product Image */}
+      <img
+        key={currentIdx}
+        src={images[currentIdx] || images[0]}
+        alt={`${shoe.name} - Foto ${currentIdx + 1}`}
+        className="w-full h-full object-contain group-hover/media:scale-105 transition-transform duration-300 rounded animate-fadeIn"
+        loading="lazy"
+      />
+
+      {/* Hover Overlay Button to open details */}
+      <button
+        type="button"
+        onClick={() => onOpenDetail(shoe)}
+        className="absolute inset-0 bg-black/40 opacity-0 group-hover/media:opacity-100 transition-opacity flex items-center justify-center gap-2 font-mono text-xs text-white font-bold"
+      >
+        <span className="bg-[#201f1f] px-3 py-1.5 rounded border border-[#ff544b] flex items-center gap-1.5 shadow-lg">
+          <Eye className="w-3.5 h-3.5 text-[#ff544b]" /> Ver Detalhes
+        </span>
+      </button>
+
+      {/* Mini Next / Prev controls when multiple photos */}
+      {hasMultiple && (
+        <>
+          <button
+            type="button"
+            onClick={handlePrev}
+            aria-label="Foto anterior"
+            className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-7 h-7 rounded-full bg-black/80 hover:bg-[#ff544b] text-white flex items-center justify-center border border-white/20 transition-all opacity-85 hover:opacity-100 shadow-md hover:scale-110 active:scale-95"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleNext}
+            aria-label="Próxima foto"
+            className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-7 h-7 rounded-full bg-black/80 hover:bg-[#ff544b] text-white flex items-center justify-center border border-white/20 transition-all opacity-85 hover:opacity-100 shadow-md hover:scale-110 active:scale-95"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+
+          {/* Dots Indicator */}
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 bg-black/70 px-2 py-0.5 rounded-full border border-white/10 pointer-events-none">
+            {images.map((_, idx) => (
+              <div
+                key={idx}
+                className={`h-1.5 rounded-full transition-all ${
+                  currentIdx === idx ? 'w-3.5 bg-[#ff544b]' : 'w-1.5 bg-white/40'
+                }`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 export const TenisView: React.FC = () => {
   const { products, addToCart, openProductDetail, setActiveTab } = useStore();
@@ -328,35 +417,7 @@ export const TenisView: React.FC = () => {
                 >
                   {/* Card Header & Image */}
                   <div>
-                    <div className="relative h-64 bg-[#121212] overflow-hidden flex items-center justify-center p-4">
-                      {shoe.badge && (
-                        <span className="absolute top-3 left-3 bg-[#ff544b] text-white font-mono text-[10px] uppercase font-bold px-2 py-0.5 rounded z-10">
-                          {shoe.badge}
-                        </span>
-                      )}
-
-                      <span className="absolute top-3 right-3 bg-[#201f1f]/90 text-gray-300 border border-[#353534] font-mono text-[10px] px-2 py-0.5 rounded z-10 uppercase">
-                        {shoe.brand}
-                      </span>
-
-                      {/* Product Image */}
-                      <img
-                        src={shoe.images[0]}
-                        alt={shoe.name}
-                        className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 rounded"
-                        loading="lazy"
-                      />
-
-                      {/* Hover Overlay Button to open details */}
-                      <button
-                        onClick={() => openProductDetail(shoe)}
-                        className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 font-mono text-xs text-white font-bold"
-                      >
-                        <span className="bg-[#201f1f] px-3 py-1.5 rounded border border-[#ff544b] flex items-center gap-1.5">
-                          <Eye className="w-3.5 h-3.5 text-[#ff544b]" /> Ver Detalhes
-                        </span>
-                      </button>
-                    </div>
+                    <ShoeCardMedia shoe={shoe} onOpenDetail={openProductDetail} />
 
                     {/* Card Body */}
                     <div className="p-5 space-y-3">

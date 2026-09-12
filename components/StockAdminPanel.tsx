@@ -35,6 +35,7 @@ import {
   Users,
   ClipboardList,
   Database,
+  Copy,
 } from 'lucide-react';
 import ProductImageUploader from './ProductImageUploader';
 import { SupabaseSyncModal } from './SupabaseSyncModal';
@@ -138,6 +139,7 @@ export const StockAdminPanel: React.FC = () => {
   const [newProdSpecs, setNewProdSpecs] = useState('7-PLY CANADIAN MAPLE, STREET');
   const [newProdSizes, setNewProdSizes] = useState('');
   const [newProdFeatured, setNewProdFeatured] = useState(false);
+  const [clonedSourceName, setClonedSourceName] = useState<string | null>(null);
 
   // Edit Product Form State
   const [editName, setEditName] = useState('');
@@ -273,6 +275,57 @@ export const StockAdminPanel: React.FC = () => {
     showToast(`Produto "${editName.trim()}" atualizado com sucesso! (${finalImages.length} fotos salvas)`);
   };
 
+  // Clone/Copy existing product to use as base for new product registration
+  const handleCloneProductIntoNew = (p: Product) => {
+    let baseSku = p.sku || 'PROD';
+    if (baseSku.includes('-COPY')) {
+      baseSku = baseSku.replace(/-COPY\d*/g, '');
+    }
+    const randomSuffix = Math.floor(100 + Math.random() * 900);
+    const uniqueSku = `${baseSku}-COPY${randomSuffix}`;
+
+    setNewProdName(`${p.name} (Cópia)`);
+    setNewProdCategory(p.category);
+    setNewProdBrand(p.brand);
+    setNewProdCustomBrand(
+      ['Florishop', 'Independent', 'Thunder', 'Venture', 'Spitfire', 'Vans', 'Nike SB', 'Adidas', 'DC Shoes'].includes(p.brand)
+        ? ''
+        : p.brand
+    );
+    setNewProdSku(uniqueSku);
+    setNewProdCost(p.purchasePrice);
+    setNewProdMargin(p.profitMargin);
+    setNewProdSalePrice(p.salePrice);
+    setNewProdStock(p.stockQuantity || 10);
+    setNewProdImages(p.images && p.images.length > 0 ? [...p.images] : []);
+    setNewProdDescription(p.description || '');
+    setNewProdBadge(p.badge || '');
+    setNewProdSpecs(p.specs ? p.specs.join(', ') : '7-PLY CANADIAN MAPLE, STREET');
+    setNewProdSizes(p.sizes ? p.sizes.join(', ') : '');
+    setNewProdFeatured(false);
+
+    setClonedSourceName(p.name);
+    setIsAddModalOpen(true);
+    showToast(`Dados de "${p.name}" copiados com sucesso! Altere a foto ou qualquer campo desejado.`);
+  };
+
+  const handleResetNewProdForm = () => {
+    setNewProdName('');
+    setNewProdSku('');
+    setNewProdCost(120);
+    setNewProdMargin(100);
+    setNewProdSalePrice(240);
+    setNewProdStock(10);
+    setNewProdImages([]);
+    setNewProdDescription('');
+    setNewProdBadge('');
+    setNewProdSpecs('7-PLY CANADIAN MAPLE, STREET');
+    setNewProdSizes('');
+    setNewProdFeatured(false);
+    setNewProdCustomBrand('');
+    setClonedSourceName(null);
+  };
+
   // Submit New Product Form
   const handleSaveNewProduct = (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,19 +378,7 @@ export const StockAdminPanel: React.FC = () => {
     showToast(`Produto "${newProdName.trim()}" cadastrado com sucesso no estoque!`);
 
     // Reset Form
-    setNewProdName('');
-    setNewProdSku('');
-    setNewProdCost(120);
-    setNewProdMargin(100);
-    setNewProdSalePrice(240);
-    setNewProdStock(10);
-    setNewProdImages([]);
-    setNewProdDescription('');
-    setNewProdBadge('');
-    setNewProdSpecs('7-PLY CANADIAN MAPLE, STREET');
-    setNewProdSizes('');
-    setNewProdFeatured(false);
-    setNewProdCustomBrand('');
+    handleResetNewProdForm();
   };
 
   // Confirm Delete Product
@@ -928,6 +969,16 @@ export const StockAdminPanel: React.FC = () => {
                             </div>
 
                             <button
+                              type="button"
+                              onClick={() => handleCloneProductIntoNew(p)}
+                              title="Copiar dados deste produto para criar um novo cadastro no estoque"
+                              className="p-1.5 px-2 bg-[#201f1f] hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-900/60 hover:border-emerald-500 rounded transition-all flex items-center gap-1 text-[11px] font-bold"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copiar</span>
+                            </button>
+
+                            <button
                               onClick={() => handleOpenEditModal(p)}
                               title="Editar informações do produto"
                               className="p-1.5 px-2 bg-[#201f1f] hover:bg-[#ff544b] text-gray-300 hover:text-white border border-[#353534] hover:border-[#ff544b] rounded transition-all flex items-center gap-1 text-[11px] font-bold"
@@ -1472,6 +1523,55 @@ export const StockAdminPanel: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveNewProduct} className="space-y-5 font-mono text-xs">
+              {/* Quick Copy Feature: Clone from existing product */}
+              {clonedSourceName ? (
+                <div className="bg-emerald-950/40 border border-emerald-500/60 p-3.5 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-emerald-300">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold text-white text-xs block">Dados copiados de: &quot;{clonedSourceName}&quot;</span>
+                      <span className="text-[11px] text-emerald-300/80">O SKU foi gerado automaticamente como único. Altere a foto, preço ou qualquer detalhe e salve como um novo produto.</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetNewProdForm}
+                    className="px-2.5 py-1 bg-[#201f1f] hover:bg-[#333] text-gray-300 hover:text-white rounded text-[10px] uppercase font-bold border border-[#353534] transition-colors whitespace-nowrap"
+                  >
+                    Limpar Cópia
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-[#141414] border border-[#333] hover:border-[#ff544b]/50 p-3.5 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-colors">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-[#ff544b]/20 border border-[#ff544b]/40 flex items-center justify-center flex-shrink-0">
+                      <Copy className="w-3.5 h-3.5 text-[#ff544b]" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-white text-xs block">Copiar produto existente como base:</span>
+                      <span className="text-[11px] text-gray-400">Preencha todos os campos e depois só altere a foto, medidas ou valores.</span>
+                    </div>
+                  </div>
+                  <div className="w-full sm:w-auto">
+                    <select
+                      onChange={(e) => {
+                        const prod = products.find((p) => p.id === e.target.value);
+                        if (prod) handleCloneProductIntoNew(prod);
+                      }}
+                      defaultValue=""
+                      className="w-full sm:w-64 bg-[#201f1f] border border-[#353534] text-xs text-white px-2.5 py-2 rounded font-mono focus:border-[#ff544b] focus:outline-none"
+                    >
+                      <option value="" disabled>Selecione para copiar...</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.brand})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
               {/* Basic Details */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -1996,20 +2096,36 @@ export const StockAdminPanel: React.FC = () => {
                 </label>
               </div>
 
-              <div className="pt-4 border-t border-[#353534] flex justify-end gap-3">
+              <div className="pt-4 border-t border-[#353534] flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
-                  onClick={() => setEditingProduct(null)}
-                  className="px-4 py-2.5 bg-[#201f1f] text-gray-300 font-bold rounded hover:text-white transition-colors"
+                  onClick={() => {
+                    const prodToClone = editingProduct;
+                    setEditingProduct(null);
+                    handleCloneProductIntoNew(prodToClone);
+                  }}
+                  className="px-4 py-2.5 bg-[#201f1f] border border-emerald-500/60 text-emerald-400 hover:bg-emerald-600 hover:text-white font-bold rounded transition-colors flex items-center gap-1.5 uppercase text-xs shadow-sm"
+                  title="Copiar os dados deste produto para criar um novo produto no estoque"
                 >
-                  Cancelar
+                  <Copy className="w-4 h-4" />
+                  <span>Copiar como Novo Cadastro</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-emerald-600 text-white font-bold uppercase rounded hover:bg-emerald-500 transition-colors flex items-center gap-2"
-                >
-                  <Check className="w-4 h-4" /> Salvar Alterações
-                </button>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditingProduct(null)}
+                    className="px-4 py-2.5 bg-[#201f1f] text-gray-300 font-bold rounded hover:text-white transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-2.5 bg-emerald-600 text-white font-bold uppercase rounded hover:bg-emerald-500 transition-colors flex items-center gap-2"
+                  >
+                    <Check className="w-4 h-4" /> Salvar Alterações
+                  </button>
+                </div>
               </div>
             </form>
           </div>

@@ -96,6 +96,10 @@ export interface Order {
   statusHistory?: OrderStatusHistoryItem[];
   deliveredAt?: string;
   canceledAt?: string;
+  hiddenFromActiveView?: boolean; // Ocultado da visualização operacional de pedidos ativos
+  isDiscardedAttempt?: boolean; // Registrado como tentativa / pedido não concluído no banco
+  discardedAt?: string; // Data e hora do descarte
+  discardReason?: string; // Motivo do descarte operacional
 }
 
 export interface UserPurchaseHistoryRecord {

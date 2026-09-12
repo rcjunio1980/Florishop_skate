@@ -98,6 +98,7 @@ interface StoreContextType {
     contextAuthor?: { role?: 'admin' | 'customer' | 'system'; name?: string; notes?: string }
   ) => void;
   deleteOrder: (orderId: string, restoreStock?: boolean) => void;
+  restoreOrderToActiveView: (orderId: string) => void;
   cancelOrder: (orderId: string, reason?: string, canceledBy?: 'admin' | 'customer') => void;
   confirmOrderDelivered: (orderId: string, customerNotes?: string) => void;
   recordPurchaseHistory: (order: Order, notes?: string) => Promise<void>;
@@ -847,6 +848,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const targetOrder = orders.find((o) => o.id === orderId);
     if (!targetOrder) return;
 
+    // REGRA DE SEGURANÇA E AUDITORIA FISCAL:
+    // Quando o pedido está no status finalizado, entregue ou confirmado, não deixar apagar mais o pedido.
+    const isFinalized =
+      targetOrder.status === 'Entregue' ||
+      targetOrder.status === 'Pago / Aprovado' ||
+      (targetOrder.status as string) === 'Finalizado' ||
+      (targetOrder.status as string) === 'Confirmado' ||
+      !!targetOrder.deliveredAt;
+
+    if (isFinalized) {
+      console.warn(
+        `[StoreContext] Operação bloqueada: Pedido finalizado/entregue #${orderId} não pode ser excluído por conformidade e auditoria fiscal.`
+      );
+      return;
+    }
+
     if (restoreStock && targetOrder.status !== 'Cancelado') {
       // Devolver estoque dos itens que não são brindes de cortesia virtuais
       setProducts((prev) =>
@@ -868,7 +885,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           type: 'ENTRADA',
           quantity: it.quantity,
           date: new Date().toLocaleString('pt-BR'),
-          notes: `Estorno por Exclusão do Pedido #${orderId}`,
+          notes: `Estorno por descarte operacional do Pedido #${orderId}`,
         }));
 
       if (returnMovements.length > 0) {
@@ -876,13 +893,66 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
-    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+    // SOFT DELETE COM AUDITORIA:
+    // Não remove do banco de dados! Fica registrado no banco como pedido não concluído,
+    // apenas saindo da tela operacional do administrador para preservar o histórico completo de tentativas.
+    const nowIso = new Date().toISOString();
+    const historyEntry: OrderStatusHistoryItem = {
+      id: `hist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      fromStatus: targetOrder.status,
+      status: 'Cancelado',
+      timestamp: nowIso,
+      formattedDate: new Date().toLocaleString('pt-BR'),
+      updatedBy: 'admin',
+      authorName: 'Administrador (Gestão de Pedidos)',
+      notes: 'Pedido em andamento descartado da tela de gestão. Arquivado no banco como Pedido Não Concluído para auditoria de movimentação do site.',
+    };
 
+    const updatedNotes = targetOrder.adminNotes
+      ? `${targetOrder.adminNotes} | [AUDITORIA] Excluído da tela operacional como pedido não concluído.`
+      : '[AUDITORIA] Excluído da tela operacional como pedido não concluído.';
+
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === orderId) {
+          return {
+            ...o,
+            status: 'Cancelado',
+            hiddenFromActiveView: true,
+            isDiscardedAttempt: true,
+            discardedAt: nowIso,
+            adminNotes: updatedNotes,
+            statusHistory: [...(o.statusHistory || []), historyEntry],
+          };
+        }
+        return o;
+      })
+    );
+
+    // Salva atualização no Supabase preservando a linha com status Cancelado/Não Concluído
     if (isSupabaseConfigured()) {
-      deleteOrderFromSupabase(orderId).catch((e) =>
-        console.warn('Falha ao excluir pedido no Supabase:', e)
+      updateOrderInSupabase(orderId, {
+        status: 'Cancelado',
+        adminNotes: updatedNotes,
+        statusHistory: [...(targetOrder.statusHistory || []), historyEntry],
+      }).catch((e) =>
+        console.warn('Falha ao registrar pedido como não concluído no Supabase:', e)
       );
     }
+  };
+
+  const restoreOrderToActiveView = (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.id === orderId) {
+          return {
+            ...o,
+            hiddenFromActiveView: false,
+          };
+        }
+        return o;
+      })
+    );
   };
 
   const cancelOrder = (orderId: string, reason?: string, canceledBy?: 'admin' | 'customer') => {
@@ -1555,6 +1625,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deleteUser,
         updateOrder,
         deleteOrder,
+        restoreOrderToActiveView,
         cancelOrder,
         confirmOrderDelivered,
         recordPurchaseHistory,

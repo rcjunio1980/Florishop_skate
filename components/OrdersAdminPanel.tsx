@@ -42,7 +42,8 @@ import {
   Sparkles,
   ArrowRight,
   RefreshCw,
-  Database
+  Database,
+  ShieldAlert,
 } from 'lucide-react';
 
 const STATUS_CONFIG: Record<
@@ -160,10 +161,11 @@ export const OrdersAdminPanel: React.FC = () => {
     updateOrderItemQuantity,
     addGiftToOrder,
     syncOrdersWithSupabase,
+    restoreOrderToActiveView,
   } = useStore();
 
   const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
-  const [viewMode, setViewMode] = useState<'ativos' | 'historico' | 'todos'>('ativos');
+  const [viewMode, setViewMode] = useState<'ativos' | 'historico' | 'todos' | 'descartados'>('ativos');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('Todos');
   const [paymentFilter, setPaymentFilter] = useState<string>('Todos');
@@ -230,22 +232,42 @@ export const OrdersAdminPanel: React.FC = () => {
     );
   }
 
-  // Partition active vs history orders
+  // Regra de Integridade: Pedidos finalizados ou confirmados não podem ser excluídos
+  const isFinalizedOrder = (order: Order) => {
+    return (
+      order.status === 'Entregue' ||
+      order.status === 'Pago / Aprovado' ||
+      (order.status as string) === 'Finalizado' ||
+      (order.status as string) === 'Confirmado'
+    );
+  };
+
+  // Partition active vs history vs discarded orders
   const activeOrdersCount = orders.filter(
-    (o) => o.status !== 'Entregue' && o.status !== 'Cancelado'
+    (o) => !o.hiddenFromActiveView && o.status !== 'Entregue' && o.status !== 'Cancelado'
   ).length;
 
   const historyOrdersCount = orders.filter(
-    (o) => o.status === 'Entregue' || o.status === 'Cancelado'
+    (o) => !o.hiddenFromActiveView && (o.status === 'Entregue' || o.status === 'Cancelado')
+  ).length;
+
+  const discardedOrdersCount = orders.filter(
+    (o) => o.hiddenFromActiveView || o.isDiscardedAttempt
   ).length;
 
   // Filter orders according to selected tab and criteria
   const filteredOrders = orders.filter((o) => {
     // 1. Tab partition:
     if (viewMode === 'ativos') {
+      if (o.hiddenFromActiveView) return false;
       if (o.status === 'Entregue' || o.status === 'Cancelado') return false;
     } else if (viewMode === 'historico') {
+      if (o.hiddenFromActiveView) return false;
       if (o.status !== 'Entregue' && o.status !== 'Cancelado') return false;
+    } else if (viewMode === 'descartados') {
+      if (!o.hiddenFromActiveView && !o.isDiscardedAttempt) return false;
+    } else if (viewMode === 'todos') {
+      // In 'todos', we display all records
     }
 
     // 2. Search query:
@@ -365,8 +387,13 @@ export const OrdersAdminPanel: React.FC = () => {
   // Handlers for Delete Order
   const handleConfirmDelete = () => {
     if (!deletingOrder) return;
+    if (isFinalizedOrder(deletingOrder)) {
+      alert('Atenção: Este pedido já está com status Finalizado, Entregue ou Confirmado e não pode ser apagado por regras de integridade contábil e fiscal.');
+      setDeletingOrder(null);
+      return;
+    }
     deleteOrder(deletingOrder.id, restoreStockOnDelete);
-    showToast(`Pedido #${deletingOrder.id} excluído com sucesso.`);
+    showToast(`Pedido #${deletingOrder.id} removido da tela operacional e arquivado no banco de dados como Não Concluído para auditoria.`);
     setDeletingOrder(null);
   };
 
@@ -527,6 +554,29 @@ export const OrdersAdminPanel: React.FC = () => {
             {orders.length}
           </span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setViewMode('descartados');
+            setStatusFilter('Todos');
+          }}
+          className={`px-5 py-3 rounded-t-lg font-bold text-xs uppercase flex items-center gap-2.5 transition-all border-b-2 ${
+            viewMode === 'descartados'
+              ? 'bg-[#201f1f] text-amber-400 border-amber-400 shadow-md'
+              : 'text-gray-400 hover:text-white border-transparent hover:bg-[#181717]'
+          }`}
+        >
+          <ShieldAlert className="w-4 h-4" />
+          <span>Auditoria: Pedidos Não Concluídos</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              viewMode === 'descartados' ? 'bg-amber-500 text-black' : 'bg-[#353534] text-gray-300'
+            }`}
+          >
+            {discardedOrdersCount}
+          </span>
+        </button>
       </div>
 
       {/* Filter and Search Bar */}
@@ -591,6 +641,23 @@ export const OrdersAdminPanel: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Informative Banner when in 'descartados' viewMode */}
+      {viewMode === 'descartados' && (
+        <div className="bg-[#1e1a14] border-2 border-amber-500/50 p-4 rounded-lg flex items-start gap-3.5 text-xs text-amber-200 shadow-xl">
+          <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5">
+            <h4 className="font-bold text-amber-300 uppercase tracking-wide flex items-center gap-2">
+              Auditoria de Movimentação do Site — Pedidos e Tentativas Não Concluídas
+            </h4>
+            <p className="text-gray-300 font-sans text-xs leading-relaxed">
+              Aqui estão registrados todos os pedidos em andamento que foram excluídos da tela de gestão.
+              Eles <strong>não foram removidos do seu banco de dados</strong>: continuam preservados para que você tenha visibilidade total de tudo o que os clientes tentaram fazer na loja, produtos escolhidos e contatos.
+              Se desejar reativar qualquer pedido, basta clicar no botão <strong>&quot;Restaurar para Gestão Ativa&quot;</strong>.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Orders List */}
       {filteredOrders.length === 0 ? (
@@ -737,18 +804,63 @@ export const OrdersAdminPanel: React.FC = () => {
                       </button>
                     )}
 
-                    <button
-                      onClick={() => {
-                        setDeletingOrder(order);
-                        setRestoreStockOnDelete(true);
-                      }}
-                      title="Excluir pedido definitivamente"
-                      className="p-1.5 bg-[#2a1a1a] hover:bg-red-600 text-red-400 hover:text-white border border-red-900/50 rounded transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {isFinalizedOrder(order) ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          alert(
+                            'Este pedido possui status Finalizado, Entregue ou Confirmado. Por regras de conformidade fiscal e segurança contábil, pedidos finalizados não podem ser apagados.'
+                          );
+                        }}
+                        title="Pedido finalizado/confirmado: bloqueado contra exclusão para garantir integridade contábil"
+                        className="p-1.5 bg-[#1e1e1e] text-gray-500 hover:text-amber-400 border border-[#333] rounded transition-colors flex items-center justify-center cursor-not-allowed"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeletingOrder(order);
+                          setRestoreStockOnDelete(true);
+                        }}
+                        title="Excluir da tela operacional (permanece arquivado no banco de dados como Pedido Não Concluído)"
+                        className="p-1.5 bg-[#2a1a1a] hover:bg-red-600 text-red-400 hover:text-white border border-red-900/50 rounded transition-colors flex items-center justify-center"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {/* Banner de Auditoria para Pedidos Descartados / Não Concluídos */}
+                {(order.hiddenFromActiveView || order.isDiscardedAttempt) && (
+                  <div className="bg-amber-950/40 border-y border-amber-500/40 px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-amber-300">
+                    <span className="flex items-center gap-2 font-bold">
+                      <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                      Registro de Auditoria: Pedido Não Concluído (Excluído da tela operacional, salvo no banco de dados)
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          restoreOrderToActiveView(order.id);
+                          showToast(`Pedido #${order.id} restaurado para a tela operacional com sucesso!`);
+                        }}
+                        className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-bold uppercase text-[10px] rounded transition-colors flex items-center gap-1.5 shadow-sm"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Restaurar para Gestão Ativa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setViewingHistoryOrder(order)}
+                        className="text-[11px] underline text-amber-400 hover:text-amber-200"
+                      >
+                        Ver auditoria
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Banner de Status Finalizado ou Cancelado */}
                 {order.status === 'Entregue' && (
@@ -1248,22 +1360,35 @@ export const OrdersAdminPanel: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: EXCLUIR PEDIDO (CONFIRMAÇÃO)                                    */}
+      {/* MODAL 2: EXCLUIR PEDIDO (CONFIRMAÇÃO COM PRESERVAÇÃO NO BANCO DE DADOS)   */}
       {/* ========================================================================= */}
       {deletingOrder && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
           <div className="relative w-full max-w-md bg-[#181717] border-2 border-red-600 rounded-lg shadow-2xl p-6 space-y-4 text-xs font-mono">
             <div className="flex items-center gap-3 text-red-500">
               <AlertTriangle className="w-7 h-7" />
-              <h3 className="font-bold text-white text-base uppercase">Excluir Pedido</h3>
+              <div>
+                <h3 className="font-bold text-white text-base uppercase">Remover Pedido da Tela</h3>
+                <span className="text-[10px] text-gray-400 block font-normal">Soft delete com retenção e auditoria no banco</span>
+              </div>
             </div>
 
             <p className="text-gray-300 font-sans text-sm">
-              Você tem certeza que deseja excluir permanentemente o pedido{' '}
+              Deseja remover da tela operacional o pedido em andamento{' '}
               <strong className="text-white font-mono">#{deletingOrder.id}</strong> do cliente{' '}
               <strong className="text-white font-mono">{deletingOrder.customerName}</strong> no valor de{' '}
               <strong className="text-[#ff544b] font-mono">R$ {deletingOrder.total.toFixed(2)}</strong>?
             </p>
+
+            <div className="bg-emerald-950/40 border border-emerald-500/40 p-3 rounded space-y-1 text-emerald-200">
+              <div className="flex items-center gap-2 font-bold text-emerald-400">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Preservação no Banco de Dados:</span>
+              </div>
+              <p className="text-[11px] text-emerald-300/90 font-sans leading-relaxed">
+                O pedido sai da sua tela de pedidos em andamento, mas <strong>não é excluído do banco de dados</strong>. Ele é mantido registrado como <strong>Pedido Não Concluído</strong> na aba de Auditoria para você acompanhar toda a movimentação do site.
+              </p>
+            </div>
 
             <div className="bg-[#201f1f] p-3 rounded border border-[#353534] space-y-2">
               <label className="flex items-center gap-2.5 text-gray-300 cursor-pointer">
@@ -1276,7 +1401,7 @@ export const OrdersAdminPanel: React.FC = () => {
                 <span className="font-bold">Devolver produtos ao estoque da loja (Estorno)</span>
               </label>
               <p className="text-[11px] text-gray-500">
-                Se marcado, as quantidades dos produtos vendidos serão devolvidas automaticamente ao inventário de estoque.
+                Se marcado, as quantidades dos produtos reservados serão devolvidas automaticamente ao inventário de estoque.
               </p>
             </div>
 
@@ -1291,7 +1416,7 @@ export const OrdersAdminPanel: React.FC = () => {
                 onClick={handleConfirmDelete}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-bold uppercase transition-colors"
               >
-                Sim, Excluir Pedido
+                Sim, Remover da Tela Ativa
               </button>
             </div>
           </div>
