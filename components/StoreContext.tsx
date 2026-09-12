@@ -36,7 +36,9 @@ import {
   syncInitialOrdersToSupabaseIfEmpty,
   syncAllOrdersToSupabase,
   upsertPurchaseHistoryInSupabase,
-  fetchUserPurchaseHistoryFromSupabase
+  fetchUserPurchaseHistoryFromSupabase,
+  fetchFeaturedConfigFromSupabase,
+  upsertFeaturedConfigInSupabase
 } from '@/lib/supabase-service';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
@@ -322,6 +324,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           });
         })
         .catch((e) => console.warn('[Supabase] Erro ao sincronizar pedidos:', e));
+
+      // Sincronização de destaques da vitrine no Supabase
+      fetchFeaturedConfigFromSupabase()
+        .then((remoteFeatured) => {
+          if (remoteFeatured) {
+            setFeaturedConfig(remoteFeatured);
+          }
+        })
+        .catch(() => {});
     }
   }, [isHydrated]);
 
@@ -1469,18 +1480,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateFeaturedSlot = (slotKey: 'slot1' | 'slot2' | 'slot3', update: Partial<FeaturedSlotConfig>) => {
-    setFeaturedConfig((prev) => ({
-      ...prev,
-      [slotKey]: {
-        ...prev[slotKey],
-        ...update,
-      },
-    }));
+    setFeaturedConfig((prev) => {
+      const next = {
+        ...prev,
+        [slotKey]: {
+          ...prev[slotKey],
+          ...update,
+        },
+      };
+      upsertFeaturedConfigInSupabase(next).catch(() => {});
+      return next;
+    });
   };
 
   const resetFeaturedConfig = () => {
     setFeaturedConfig(INITIAL_FEATURED_CONFIG);
     localStorage.removeItem(STORAGE_KEYS.FEATURED);
+    upsertFeaturedConfigInSupabase(INITIAL_FEATURED_CONFIG).catch(() => {});
   };
 
   const resetToInitialData = () => {

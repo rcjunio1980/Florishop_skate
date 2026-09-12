@@ -8,9 +8,11 @@ export interface SupabaseHealthCheck {
   error?: string;
   tables?: {
     products: boolean;
-    orders: boolean;
     users: boolean;
+    orders: boolean;
+    order_items: boolean;
     stock_movements: boolean;
+    featured_config: boolean;
     user_purchase_history: boolean;
   };
 }
@@ -66,18 +68,28 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
       .select('id')
       .limit(1);
 
-    const { error: orderError } = await client
-      .from('orders')
-      .select('id')
-      .limit(1);
-
     const { error: userError } = await client
       .from('users')
       .select('id')
       .limit(1);
 
+    const { error: orderError } = await client
+      .from('orders')
+      .select('id')
+      .limit(1);
+
+    const { error: orderItemsError } = await client
+      .from('order_items')
+      .select('id')
+      .limit(1);
+
     const { error: stockError } = await client
       .from('stock_movements')
+      .select('id')
+      .limit(1);
+
+    const { error: featuredError } = await client
+      .from('featured_config')
       .select('id')
       .limit(1);
 
@@ -101,9 +113,11 @@ export async function checkSupabaseConnection(): Promise<SupabaseHealthCheck> {
       error: prodError ? prodError.message : undefined,
       tables: {
         products: !prodError,
-        orders: !orderError,
         users: !userError,
+        orders: !orderError,
+        order_items: !orderItemsError,
         stock_movements: !stockError,
+        featured_config: !featuredError,
         user_purchase_history: !historyError,
       },
     };
@@ -943,5 +957,75 @@ export async function fetchAllPurchaseHistoryFromSupabase(): Promise<UserPurchas
       return [];
     }
     return [];
+  }
+}
+
+/**
+ * Busca a configuração de destaques do mês no Supabase (tabela featured_config)
+ */
+export async function fetchFeaturedConfigFromSupabase(): Promise<FeaturedMonthConfig | null> {
+  if (!isSupabaseConfigured()) return null;
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('featured_config')
+      .select('*')
+      .eq('id', 'current')
+      .maybeSingle();
+
+    if (error) {
+      if (!isTableMissingError(error)) {
+        console.warn('[Supabase] Aviso ao buscar featured_config:', error.message);
+      }
+      return null;
+    }
+
+    if (!data || !data.slot1) return null;
+    return {
+      slot1: data.slot1,
+      slot2: data.slot2,
+      slot3: data.slot3,
+    };
+  } catch (e: any) {
+    if (!isTableMissingError(e)) {
+      console.warn('[Supabase] Exceção ao buscar featured_config:', e?.message || e);
+    }
+    return null;
+  }
+}
+
+/**
+ * Salva a configuração de destaques do mês no Supabase (tabela featured_config)
+ */
+export async function upsertFeaturedConfigInSupabase(
+  config: FeaturedMonthConfig
+): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.from('featured_config').upsert({
+      id: 'current',
+      slot1: config.slot1,
+      slot2: config.slot2,
+      slot3: config.slot3,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+    if (error) {
+      if (!isTableMissingError(error)) {
+        console.warn('[Supabase] Aviso ao atualizar featured_config:', error.message);
+      }
+      return false;
+    }
+    return true;
+  } catch (e: any) {
+    if (!isTableMissingError(e)) {
+      console.warn('[Supabase] Exceção ao atualizar featured_config:', e?.message || e);
+    }
+    return false;
   }
 }

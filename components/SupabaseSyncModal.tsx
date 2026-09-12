@@ -45,6 +45,66 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({ isOpen, on
   const [copiedMigration, setCopiedMigration] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
   const [copiedHistorySql, setCopiedHistorySql] = useState(false);
+  const [copiedPendingSql, setCopiedPendingSql] = useState(false);
+
+  const orderItemsTableSql = `-- ==============================================================================
+-- FLORISHOP SKATE SHOP: TABELA order_items (ITENS DO PEDIDO)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.order_items (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    order_id TEXT NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+    product_id TEXT REFERENCES public.products(id) ON DELETE SET NULL,
+    product_name TEXT NOT NULL,
+    product_sku TEXT,
+    product_image TEXT,
+    sale_price NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+    selected_size TEXT,
+    is_gift BOOLEAN NOT NULL DEFAULT FALSE,
+    custom_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product_id ON public.order_items(product_id);
+
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Itens do pedido com visualização permitida" ON public.order_items;
+CREATE POLICY "Itens do pedido com visualização permitida" ON public.order_items FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Criação e atualização de itens permitida" ON public.order_items;
+CREATE POLICY "Criação e atualização de itens permitida" ON public.order_items FOR ALL USING (true) WITH CHECK (true);
+`;
+
+  const featuredConfigTableSql = `-- ==============================================================================
+-- FLORISHOP SKATE SHOP: TABELA featured_config (DESTAQUES DO MÊS)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.featured_config (
+    id TEXT PRIMARY KEY DEFAULT 'current',
+    slot1 JSONB NOT NULL,
+    slot2 JSONB NOT NULL,
+    slot3 JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.featured_config ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Configuração de destaques visível publicamente" ON public.featured_config;
+CREATE POLICY "Configuração de destaques visível publicamente" ON public.featured_config FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Apenas admin pode alterar destaques" ON public.featured_config;
+CREATE POLICY "Apenas admin pode alterar destaques" ON public.featured_config FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO public.featured_config (id, slot1, slot2, slot3)
+VALUES (
+    'current',
+    '{"productId": "prod-2", "customTag": "NOVO DROP", "customSubtitle": "SHAPE MAPLE CANADENSE"}'::jsonb,
+    '{"productId": "prod-3", "customTag": "TITANIUM", "customSubtitle": "TRUCKS DE ALTA DENSIDADE"}'::jsonb,
+    '{"productId": "prod-4", "customTag": "101A DUREZA", "customSubtitle": "URETANO HIGH POP"}'::jsonb
+)
+ON CONFLICT (id) DO NOTHING;
+`;
 
   const historyTableSql = `-- ==============================================================================
 -- FLORISHOP SKATE SHOP: TABELA user_purchase_history (HISTÓRICO PERMANENTE)
@@ -82,6 +142,17 @@ CREATE POLICY "Histórico de compras público" ON public.user_purchase_history F
 DROP POLICY IF EXISTS "Gestão histórico de compras" ON public.user_purchase_history;
 CREATE POLICY "Gestão histórico de compras" ON public.user_purchase_history FOR ALL USING (true) WITH CHECK (true);
 `;
+
+  const getCombinedPendingSql = (pendingKeys: string[]) => {
+    const parts: string[] = [];
+    if (pendingKeys.includes('order_items')) parts.push(orderItemsTableSql);
+    if (pendingKeys.includes('featured_config')) parts.push(featuredConfigTableSql);
+    if (pendingKeys.includes('user_purchase_history')) parts.push(historyTableSql);
+    if (parts.length === 0) {
+      parts.push(orderItemsTableSql, featuredConfigTableSql, historyTableSql);
+    }
+    return parts.join('\n\n');
+  };
 
   const migrationCode = `-- ==============================================================================
 -- MIGRATION: 20260907000000_initial_schema.sql
@@ -581,33 +652,94 @@ SET slot1 = EXCLUDED.slot1, slot2 = EXCLUDED.slot2, slot3 = EXCLUDED.slot3, upda
                   })}
                 </div>
 
-                {/* Banner de Ajuda quando a tabela user_purchase_history está pendente */}
-                {health?.connected && health.tables?.user_purchase_history === false && (
-                  <div className="mt-4 p-4 rounded border border-amber-800/60 bg-amber-950/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
-                    <div className="flex items-start gap-2.5">
-                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold text-amber-300 block">
-                          Tabela &quot;user_purchase_history&quot; pendente no Supabase (PGRST205)
-                        </span>
-                        <span className="text-gray-300 text-[11px]">
-                          Seus históricos de compra estão salvos e operando no armazenamento local (localStorage). Para sincronizar no banco remoto, execute este script SQL no Supabase:
-                        </span>
+                {/* Banner Inteligente de Tabelas Pendentes ou Sincronização Completa */}
+                {health?.connected && (() => {
+                  const pendingKeys = Object.entries(health.tables || {})
+                    .filter(([_, isOk]) => isOk === false)
+                    .map(([tbl]) => tbl);
+
+                  if (pendingKeys.length > 0) {
+                    return (
+                      <div className="mt-4 p-4 rounded border border-amber-800/60 bg-amber-950/30 flex flex-col gap-3 text-xs font-mono">
+                        <div className="flex items-start gap-2.5">
+                          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <span className="font-bold text-amber-300 block">
+                              {pendingKeys.length === 1
+                                ? `Tabela "${pendingKeys[0]}" pendente no Supabase`
+                                : `Tabelas pendentes no Supabase (${pendingKeys.join(', ')})`}
+                            </span>
+                            <span className="text-gray-300 text-[11px] block mt-0.5">
+                              Os dados locais continuam seguros e operando normalmente. Para criar as tabelas pendentes no seu projeto Supabase, copie e execute este script no SQL Editor:
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const sqlToCopy = getCombinedPendingSql(pendingKeys);
+                              navigator.clipboard.writeText(sqlToCopy);
+                              setCopiedPendingSql(true);
+                              setTimeout(() => setCopiedPendingSql(false), 3000);
+                            }}
+                            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold uppercase rounded text-[11px] flex items-center gap-1.5 shrink-0 transition-colors shadow-sm"
+                          >
+                            {copiedPendingSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedPendingSql ? 'SQL Copiado!' : 'Copiar SQL das Pendentes'}
+                          </button>
+                        </div>
+
+                        {/* Atalhos rápidos por tabela */}
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-800/30 text-[10px]">
+                          <span className="text-gray-400">Copiar individual:</span>
+                          {pendingKeys.includes('order_items') && (
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(orderItemsTableSql);
+                                setCopiedPendingSql(true);
+                                setTimeout(() => setCopiedPendingSql(false), 2000);
+                              }}
+                              className="px-2 py-1 bg-[#222] hover:bg-[#333] text-amber-300 rounded border border-amber-800/40"
+                            >
+                              order_items SQL
+                            </button>
+                          )}
+                          {pendingKeys.includes('featured_config') && (
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(featuredConfigTableSql);
+                                setCopiedPendingSql(true);
+                                setTimeout(() => setCopiedPendingSql(false), 2000);
+                              }}
+                              className="px-2 py-1 bg-[#222] hover:bg-[#333] text-amber-300 rounded border border-amber-800/40"
+                            >
+                              featured_config SQL
+                            </button>
+                          )}
+                          {pendingKeys.includes('user_purchase_history') && (
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(historyTableSql);
+                                setCopiedPendingSql(true);
+                                setTimeout(() => setCopiedPendingSql(false), 2000);
+                              }}
+                              className="px-2 py-1 bg-[#222] hover:bg-[#333] text-amber-300 rounded border border-amber-800/40"
+                            >
+                              user_purchase_history SQL
+                            </button>
+                          )}
+                        </div>
                       </div>
+                    );
+                  }
+
+                  return (
+                    <div className="mt-4 p-3 rounded border border-[#3ecf8e]/30 bg-[#3ecf8e]/10 flex items-center gap-2.5 text-xs font-mono text-[#3ecf8e]">
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-[#3ecf8e]" />
+                      <span className="font-bold">
+                        Todas as 7 tabelas relacionais estão ativas e sincronizadas no banco Supabase!
+                      </span>
                     </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(historyTableSql);
-                        setCopiedHistorySql(true);
-                        setTimeout(() => setCopiedHistorySql(false), 3000);
-                      }}
-                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold uppercase rounded text-[11px] flex items-center gap-1.5 shrink-0 transition-colors shadow-sm"
-                    >
-                      {copiedHistorySql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedHistorySql ? 'SQL Copiado!' : 'Copiar SQL do Histórico'}
-                    </button>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
 
               {/* Sincronização */}
