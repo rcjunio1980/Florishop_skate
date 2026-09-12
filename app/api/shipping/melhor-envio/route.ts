@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const originCep = String(process.env.MELHOR_ENVIO_ORIGIN_CEP || '88010000').replace(/\D/g, '').slice(0, 8);
+    const originCep = String(process.env.MELHOR_ENVIO_ORIGIN_CEP || '07135040').replace(/\D/g, '').slice(0, 8);
     const token = process.env.MELHOR_ENVIO_TOKEN;
     const environment = process.env.MELHOR_ENVIO_ENVIRONMENT || 'sandbox';
 
@@ -113,19 +113,18 @@ export async function POST(req: NextRequest) {
                 const discount = original > rawPrice ? Math.round(((original - rawPrice) / original) * 100) : undefined;
                 const carrierName = item.company?.name || 'Transportadora';
                 const serviceName = item.name || '';
-                const isFree = subtotal >= 250 && (serviceName.includes('PAC') || serviceName.includes('Package'));
 
                 return {
                   id: `me-${item.id || item.name.toLowerCase().replace(/\s+/g, '-')}`,
                   name: `${serviceName} (${carrierName})`,
                   carrier: carrierName,
                   carrierService: `Melhor Envio - ${carrierName} ${serviceName}`,
-                  price: isFree ? 0 : Number(rawPrice.toFixed(2)),
-                  originalPrice: isFree ? rawPrice : (discount ? original : undefined),
+                  price: Number(rawPrice.toFixed(2)),
+                  originalPrice: discount ? original : undefined,
                   discountPercent: discount,
                   deadline: `${item.delivery_time || item.custom_delivery_time || 3} a ${(item.delivery_time || 3) + 2} dias úteis`,
-                  isFree,
-                  tag: isFree ? 'FRETE GRÁTIS' : (discount ? `${discount}% OFF Melhor Envio` : 'Melhor Envio'),
+                  isFree: false,
+                  tag: discount ? `${discount}% OFF Melhor Envio` : 'Melhor Envio',
                   provider: 'Melhor Envio',
                 };
               });
@@ -138,44 +137,45 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Fallback inteligente baseado nas tabelas comerciais oficiais do Melhor Envio
-    const options: MelhorEnvioOption[] = liveOptions || calculateMelhorEnvioRates(
+    const calculatedOptions: MelhorEnvioOption[] = liveOptions || calculateMelhorEnvioRates(
       cleanCep,
-      addressData.state,
-      subtotal
+      addressData.state
     );
 
-    // 4. Adiciona modalidades locais da Florishop (Motoboy para SC e Retirada no Skatepark)
-    const isLocalSC = addressData.state === 'SC' || cleanCep.startsWith('88');
-    if (isLocalSC) {
-      options.push({
+    // 4. Modalidade de entrega local expressa por motoboy para Grande São Paulo / Guarulhos
+    const firstDigit = cleanCep.charAt(0);
+    const isLocalGuarulhosSP = addressData.state === 'SP' || firstDigit === '0' || firstDigit === '1';
+    if (isLocalGuarulhosSP) {
+      calculatedOptions.push({
         id: 'florishop-motoboy',
-        name: 'Entrega Expressa / Motoboy Local',
+        name: 'Motoboy Expresso (Guarulhos & Grande SP)',
         carrier: 'Florishop Express',
         carrierService: 'Florishop Express Motoboy',
-        price: 14.00,
+        price: 18.00,
         deadline: 'Até 24 horas (mesmo dia)',
+        isFree: false,
         tag: 'Entrega Rápida Local',
         provider: 'Local',
       });
     }
 
-    options.push({
-      id: 'florishop-retirada',
-      name: 'Retirada no Skatepark / Loja Física',
-      carrier: 'Florishop Skate',
-      carrierService: 'Retirada Presencial no Skatepark',
-      price: 0,
-      deadline: 'Disponível em até 2 horas',
-      isFree: true,
-      tag: 'Sem Custo de Envio',
-      provider: 'Local',
-    });
+    // Filtrar para garantir que nenhuma opção gratuita seja apresentada (sem frete grátis)
+    const options = calculatedOptions.filter((opt) => !opt.isFree && opt.price > 0);
 
     return NextResponse.json({
       success: true,
       provider: 'Melhor Envio',
       isApiConnected,
       environment,
+      origin: {
+        cep: '07135-040',
+        street: 'Rua Joana',
+        number: '117',
+        neighborhood: 'Jardim Adriana',
+        city: 'Guarulhos',
+        state: 'SP',
+        fullAddress: 'Rua Joana, 117 - Jardim Adriana, Guarulhos - SP, CEP 07135-040',
+      },
       originCep: `${originCep.slice(0, 5)}-${originCep.slice(5)}`,
       destinationCep: `${cleanCep.slice(0, 5)}-${cleanCep.slice(5)}`,
       address: addressData,
@@ -195,17 +195,15 @@ export async function POST(req: NextRequest) {
  */
 function calculateMelhorEnvioRates(
   cep: string,
-  uf: string,
-  subtotal: number
+  uf: string
 ): MelhorEnvioOption[] {
-  const isFreeEligible = subtotal >= 250;
   const firstDigit = cep.charAt(0);
-  const isFloripaOrSC = uf === 'SC' || firstDigit === '8';
+  const isLocalGuarulhosSP = uf === 'SP' || firstDigit === '0' || firstDigit === '1';
   const isSouthSoutheast =
     ['SP', 'RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(uf) ||
     ['0', '1', '2', '3', '8', '9'].includes(firstDigit);
 
-  // Preços balcão vs Preços Melhor Envio (com até 35% de desconto exclusivo)
+  // Preços balcão vs Preços Melhor Envio saindo da Origem: Rua Joana reche reche, 117 — CEP 07135-040, Jardim Adriana, Guarulhos - SP
   let jadlogPrice: number;
   let jadlogOriginal: number;
   let jadlogDays: string;
@@ -222,54 +220,54 @@ function calculateMelhorEnvioRates(
   let loggiOriginal: number;
   let loggiDays: string;
 
-  if (isFloripaOrSC) {
-    jadlogPrice = 14.80;
+  if (isLocalGuarulhosSP) {
+    jadlogPrice = 14.90;
     jadlogOriginal = 21.00;
-    jadlogDays = '2 a 4 dias úteis';
+    jadlogDays = '1 a 3 dias úteis';
 
-    pacPrice = 16.50;
-    pacOriginal = 24.50;
-    pacDays = '3 a 5 dias úteis';
+    pacPrice = 16.20;
+    pacOriginal = 23.50;
+    pacDays = '2 a 4 dias úteis';
 
-    sedexPrice = 24.90;
-    sedexOriginal = 36.00;
+    sedexPrice = 21.90;
+    sedexOriginal = 31.00;
     sedexDays = '1 a 2 dias úteis';
 
-    loggiPrice = 17.90;
-    loggiOriginal = 25.00;
-    loggiDays = '1 a 3 dias úteis';
+    loggiPrice = 15.90;
+    loggiOriginal = 22.00;
+    loggiDays = '1 a 2 dias úteis';
   } else if (isSouthSoutheast) {
-    jadlogPrice = 18.90;
-    jadlogOriginal = 27.50;
+    jadlogPrice = 19.80;
+    jadlogOriginal = 28.50;
     jadlogDays = '3 a 6 dias úteis';
 
-    pacPrice = 22.90;
-    pacOriginal = 31.90;
+    pacPrice = 23.40;
+    pacOriginal = 32.90;
     pacDays = '4 a 7 dias úteis';
 
-    sedexPrice = 36.90;
-    sedexOriginal = 54.00;
+    sedexPrice = 34.50;
+    sedexOriginal = 49.00;
     sedexDays = '2 a 3 dias úteis';
 
-    loggiPrice = 24.50;
-    loggiOriginal = 34.00;
+    loggiPrice = 22.80;
+    loggiOriginal = 32.00;
     loggiDays = '2 a 4 dias úteis';
   } else {
     // Centro-Oeste, Nordeste, Norte
-    jadlogPrice = 28.50;
+    jadlogPrice = 29.50;
     jadlogOriginal = 42.00;
     jadlogDays = '6 a 9 dias úteis';
 
-    pacPrice = 32.90;
-    pacOriginal = 46.00;
+    pacPrice = 33.90;
+    pacOriginal = 47.00;
     pacDays = '7 a 12 dias úteis';
 
-    sedexPrice = 52.90;
-    sedexOriginal = 78.00;
+    sedexPrice = 54.90;
+    sedexOriginal = 79.00;
     sedexDays = '3 a 5 dias úteis';
 
-    loggiPrice = 35.00;
-    loggiOriginal = 49.00;
+    loggiPrice = 36.00;
+    loggiOriginal = 50.00;
     loggiDays = '5 a 8 dias úteis';
   }
 
@@ -279,12 +277,12 @@ function calculateMelhorEnvioRates(
       name: 'Jadlog .Package (Melhor Envio)',
       carrier: 'Jadlog',
       carrierService: 'Melhor Envio - Jadlog .Package',
-      price: isFreeEligible ? 0 : jadlogPrice,
-      originalPrice: isFreeEligible ? jadlogPrice : jadlogOriginal,
+      price: jadlogPrice,
+      originalPrice: jadlogOriginal,
       discountPercent: Math.round(((jadlogOriginal - jadlogPrice) / jadlogOriginal) * 100),
       deadline: jadlogDays,
-      isFree: isFreeEligible,
-      tag: isFreeEligible ? 'FRETE GRÁTIS' : 'Econômico Destaque',
+      isFree: false,
+      tag: 'Econômico Destaque',
       provider: 'Melhor Envio',
     },
     {
@@ -292,12 +290,12 @@ function calculateMelhorEnvioRates(
       name: 'Correios PAC (Melhor Envio)',
       carrier: 'Correios',
       carrierService: 'Melhor Envio - Correios PAC',
-      price: isFreeEligible ? 0 : pacPrice,
-      originalPrice: isFreeEligible ? pacPrice : pacOriginal,
+      price: pacPrice,
+      originalPrice: pacOriginal,
       discountPercent: Math.round(((pacOriginal - pacPrice) / pacOriginal) * 100),
       deadline: pacDays,
-      isFree: isFreeEligible,
-      tag: isFreeEligible ? 'FRETE GRÁTIS' : 'Econômico Oficial',
+      isFree: false,
+      tag: 'Econômico Oficial',
       provider: 'Melhor Envio',
     },
     {
@@ -309,6 +307,7 @@ function calculateMelhorEnvioRates(
       originalPrice: sedexOriginal,
       discountPercent: Math.round(((sedexOriginal - sedexPrice) / sedexOriginal) * 100),
       deadline: sedexDays,
+      isFree: false,
       tag: 'Mais Rápido / Expresso',
       provider: 'Melhor Envio',
     },
@@ -321,6 +320,7 @@ function calculateMelhorEnvioRates(
       originalPrice: loggiOriginal,
       discountPercent: Math.round(((loggiOriginal - loggiPrice) / loggiOriginal) * 100),
       deadline: loggiDays,
+      isFree: false,
       tag: 'Rápido & Rastreado',
       provider: 'Melhor Envio',
     },

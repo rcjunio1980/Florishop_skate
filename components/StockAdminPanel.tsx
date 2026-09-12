@@ -132,7 +132,7 @@ export const StockAdminPanel: React.FC = () => {
   const [newProdMargin, setNewProdMargin] = useState<number>(100);
   const [newProdSalePrice, setNewProdSalePrice] = useState<number>(240);
   const [newProdStock, setNewProdStock] = useState<number>(10);
-  const [newProdImage, setNewProdImage] = useState('');
+  const [newProdImages, setNewProdImages] = useState<string[]>([]);
   const [newProdDescription, setNewProdDescription] = useState('');
   const [newProdBadge, setNewProdBadge] = useState('');
   const [newProdSpecs, setNewProdSpecs] = useState('7-PLY CANADIAN MAPLE, STREET');
@@ -149,7 +149,7 @@ export const StockAdminPanel: React.FC = () => {
   const [editMargin, setEditMargin] = useState<number>(0);
   const [editSalePrice, setEditSalePrice] = useState<number>(0);
   const [editStock, setEditStock] = useState<number>(0);
-  const [editImage, setEditImage] = useState('');
+  const [editImages, setEditImages] = useState<string[]>([]);
   const [editDescription, setEditDescription] = useState('');
   const [editBadge, setEditBadge] = useState('');
   const [editSpecs, setEditSpecs] = useState('');
@@ -217,7 +217,7 @@ export const StockAdminPanel: React.FC = () => {
     setEditMargin(p.profitMargin);
     setEditSalePrice(p.salePrice);
     setEditStock(p.stockQuantity);
-    setEditImage(p.images && p.images.length > 0 ? p.images[0] : '');
+    setEditImages(p.images && p.images.length > 0 ? p.images : []);
     setEditDescription(p.description || '');
     setEditBadge(p.badge || '');
     setEditSpecs(p.specs ? p.specs.join(', ') : '');
@@ -249,7 +249,8 @@ export const StockAdminPanel: React.FC = () => {
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
-    const fallbackImg = editingProduct.images[0] || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDfAUZUZdE_GrI_XZ3Mw6u0nQfx_ifYFGi-mXy1Svr0jL1hT9lU0gSEya_n83GTj6al_pT23g00qj802qDXxR2jLtTSY-BWL2pqhez02cIHNhrSpWBuGcSNsE7J4Mum9Iq-a9Hk1wvqHrTm8T3gUYuRTY24xpZCSHnMClO6h4eRcHRO1GxGdFLyPi5JFcDzrWx80QKTgfp0GJv0X9xep4INPafQK9irO4-kHBMR8i3YnSzWJWaqejb16A';
+    const fallbackImg = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDfAUZUZdE_GrI_XZ3Mw6u0nQfx_ifYFGi-mXy1Svr0jL1hT9lU0gSEya_n83GTj6al_pT23g00qj802qDXxR2jLtTSY-BWL2pqhez02cIHNhrSpWBuGcSNsE7J4Mum9Iq-a9Hk1wvqHrTm8T3gUYuRTY24xpZCSHnMClO6h4eRcHRO1GxGdFLyPi5JFcDzrWx80QKTgfp0GJv0X9xep4INPafQK9irO4-kHBMR8i3YnSzWJWaqejb16A';
+    const finalImages = editImages.length > 0 ? editImages : (editingProduct.images.length > 0 ? editingProduct.images : [fallbackImg]);
 
     updateProduct(editingProduct.id, {
       name: editName.trim(),
@@ -260,7 +261,7 @@ export const StockAdminPanel: React.FC = () => {
       profitMargin: Number(editMargin),
       salePrice: Number(editSalePrice),
       stockQuantity: Number(editStock),
-      images: [editImage.trim() || fallbackImg],
+      images: finalImages,
       description: editDescription.trim(),
       badge: editBadge.trim() || undefined,
       specs: parsedSpecs,
@@ -269,7 +270,7 @@ export const StockAdminPanel: React.FC = () => {
     });
 
     setEditingProduct(null);
-    showToast(`Produto "${editName.trim()}" atualizado com sucesso!`);
+    showToast(`Produto "${editName.trim()}" atualizado com sucesso! (${finalImages.length} fotos salvas)`);
   };
 
   // Submit New Product Form
@@ -299,8 +300,9 @@ export const StockAdminPanel: React.FC = () => {
       .filter((s) => s.length > 0);
 
     const defaultImg =
-      newProdImage.trim() ||
       'https://lh3.googleusercontent.com/aida-public/AB6AXuDfAUZUZdE_GrI_XZ3Mw6u0nQfx_ifYFGi-mXy1Svr0jL1hT9lU0gSEya_n83GTj6al_pT23g00qj802qDXxR2jLtTSY-BWL2pqhez02cIHNhrSpWBuGcSNsE7J4Mum9Iq-a9Hk1wvqHrTm8T3gUYuRTY24xpZCSHnMClO6h4eRcHRO1GxGdFLyPi5JFcDzrWx80QKTgfp0GJv0X9xep4INPafQK9irO4-kHBMR8i3YnSzWJWaqejb16A';
+
+    const finalImages = newProdImages.length > 0 ? newProdImages : [defaultImg];
 
     addProduct({
       name: newProdName.trim(),
@@ -311,7 +313,7 @@ export const StockAdminPanel: React.FC = () => {
       profitMargin: Number(newProdMargin),
       salePrice: Number(calculatedSale),
       stockQuantity: Number(newProdStock),
-      images: [defaultImg],
+      images: finalImages,
       description: newProdDescription.trim() || 'Equipamento de alta performance para quem vive o asfalto.',
       specs: parsedSpecs.length > 0 ? parsedSpecs : ['7-PLY MAPLE', 'STREET'],
       sizes: parsedSizes.length > 0 ? parsedSizes : undefined,
@@ -329,7 +331,7 @@ export const StockAdminPanel: React.FC = () => {
     setNewProdMargin(100);
     setNewProdSalePrice(240);
     setNewProdStock(10);
-    setNewProdImage('');
+    setNewProdImages([]);
     setNewProdDescription('');
     setNewProdBadge('');
     setNewProdSpecs('7-PLY CANADIAN MAPLE, STREET');
@@ -1674,12 +1676,13 @@ export const StockAdminPanel: React.FC = () => {
                 </div>
               </div>
 
-              {/* Product Image with Local Upload or Web URL */}
+              {/* Product Images with Multi-Upload (10+ photos supported) */}
               <ProductImageUploader
-                currentImageUrl={newProdImage}
-                onImageChange={(url) => setNewProdImage(url)}
+                images={newProdImages}
+                onImagesChange={(imgs) => setNewProdImages(imgs)}
                 presetImages={PRESET_IMAGES}
-                label="Foto do Produto (Upload Local ou Link Web)"
+                label="Fotos do Produto (Ângulos e Detalhes - Mínimo 10 fotos suportadas)"
+                maxImages={15}
               />
 
               {/* Specs */}
@@ -1946,12 +1949,13 @@ export const StockAdminPanel: React.FC = () => {
                 />
               </div>
 
-              {/* Product Image with Local Upload or Web URL */}
+              {/* Product Images with Multi-Upload (10+ photos supported) */}
               <ProductImageUploader
-                currentImageUrl={editImage}
-                onImageChange={(url) => setEditImage(url)}
+                images={editImages}
+                onImagesChange={(imgs) => setEditImages(imgs)}
                 presetImages={PRESET_IMAGES}
-                label="Foto do Produto (Upload Local ou Link Web)"
+                label="Fotos do Produto (Ângulos e Detalhes - Mínimo 10 fotos suportadas)"
+                maxImages={15}
               />
 
               {/* Specs */}

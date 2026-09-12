@@ -1,3 +1,14 @@
+export const SHIPPING_ORIGIN = {
+  cep: '07135-040',
+  cepRaw: '07135040',
+  street: 'Rua Joana reche reche',
+  number: '117',
+  neighborhood: 'Jardim Adriana',
+  city: 'Guarulhos',
+  state: 'SP',
+  fullAddress: 'Rua Joana reche reche, 117 — CEP 07135-040, Jardim Adriana, Guarulhos - SP',
+};
+
 export interface ShippingOption {
   id: string;
   name: string;
@@ -125,17 +136,17 @@ export async function fetchAddressAndShipping(
 
   const uf = (address.state || '').toUpperCase();
   const firstDigit = cep.charAt(0);
-  const isLocalSC = uf === 'SC' || firstDigit === '8';
+  const isLocalGuarulhosSP = uf === 'SP' || firstDigit === '0' || firstDigit === '1';
   const isSouthSoutheast =
     ['SP', 'RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(uf) ||
     ['0', '1', '2', '3', '8', '9'].includes(firstDigit);
 
-  const isFreeEligible = subtotal >= 250;
-
-  const jadlogBase = isLocalSC ? 14.80 : isSouthSoutheast ? 18.90 : 28.50;
-  const pacBase = isLocalSC ? 16.50 : isSouthSoutheast ? 22.90 : 32.90;
-  const sedexBase = isLocalSC ? 24.90 : isSouthSoutheast ? 36.90 : 52.90;
-  const loggiBase = isLocalSC ? 17.90 : isSouthSoutheast ? 24.50 : 35.00;
+  // Preços calculados a partir da Origem: Rua Joana reche reche, 117 — CEP 07135-040, Jardim Adriana, Guarulhos - SP
+  // Sem modalidade de frete grátis (frete grátis desativado por solicitação da loja)
+  const jadlogBase = isLocalGuarulhosSP ? 14.90 : isSouthSoutheast ? 19.80 : 29.50;
+  const pacBase = isLocalGuarulhosSP ? 16.20 : isSouthSoutheast ? 23.40 : 33.90;
+  const sedexBase = isLocalGuarulhosSP ? 21.90 : isSouthSoutheast ? 34.50 : 54.90;
+  const loggiBase = isLocalGuarulhosSP ? 15.90 : isSouthSoutheast ? 22.80 : 36.00;
 
   const options: ShippingOption[] = [
     {
@@ -143,11 +154,10 @@ export async function fetchAddressAndShipping(
       name: 'Jadlog .Package (Melhor Envio)',
       carrier: 'Jadlog',
       carrierService: 'Melhor Envio - Jadlog .Package',
-      price: isFreeEligible ? 0 : jadlogBase,
-      originalPrice: isFreeEligible ? jadlogBase : undefined,
-      deadline: isLocalSC ? '2 a 4 dias úteis' : isSouthSoutheast ? '3 a 6 dias úteis' : '6 a 9 dias úteis',
-      isFree: isFreeEligible,
-      tag: isFreeEligible ? 'FRETE GRÁTIS' : 'Econômico Destaque',
+      price: jadlogBase,
+      deadline: isLocalGuarulhosSP ? '1 a 3 dias úteis' : isSouthSoutheast ? '3 a 6 dias úteis' : '6 a 9 dias úteis',
+      isFree: false,
+      tag: 'Econômico Destaque',
       provider: 'Melhor Envio',
     },
     {
@@ -155,11 +165,10 @@ export async function fetchAddressAndShipping(
       name: 'Correios PAC (Melhor Envio)',
       carrier: 'Correios',
       carrierService: 'Melhor Envio - Correios PAC',
-      price: isFreeEligible ? 0 : pacBase,
-      originalPrice: isFreeEligible ? pacBase : undefined,
-      deadline: isLocalSC ? '3 a 5 dias úteis' : isSouthSoutheast ? '4 a 7 dias úteis' : '7 a 12 dias úteis',
-      isFree: isFreeEligible,
-      tag: isFreeEligible ? 'FRETE GRÁTIS' : 'Econômico Oficial',
+      price: pacBase,
+      deadline: isLocalGuarulhosSP ? '2 a 4 dias úteis' : isSouthSoutheast ? '4 a 7 dias úteis' : '7 a 12 dias úteis',
+      isFree: false,
+      tag: 'Econômico Oficial',
       provider: 'Melhor Envio',
     },
     {
@@ -168,7 +177,8 @@ export async function fetchAddressAndShipping(
       carrier: 'Correios',
       carrierService: 'Melhor Envio - Correios SEDEX',
       price: sedexBase,
-      deadline: isLocalSC ? '1 a 2 dias úteis' : isSouthSoutheast ? '2 a 3 dias úteis' : '3 a 5 dias úteis',
+      deadline: isLocalGuarulhosSP ? '1 a 2 dias úteis' : isSouthSoutheast ? '2 a 3 dias úteis' : '3 a 5 dias úteis',
+      isFree: false,
       tag: 'Mais Rápido / Expresso',
       provider: 'Melhor Envio',
     },
@@ -178,40 +188,34 @@ export async function fetchAddressAndShipping(
       carrier: 'Loggi',
       carrierService: 'Melhor Envio - Loggi Express',
       price: loggiBase,
-      deadline: isLocalSC ? '1 a 3 dias úteis' : isSouthSoutheast ? '2 a 4 dias úteis' : '5 a 8 dias úteis',
+      deadline: isLocalGuarulhosSP ? '1 a 2 dias úteis' : isSouthSoutheast ? '2 a 4 dias úteis' : '5 a 8 dias úteis',
+      isFree: false,
       tag: 'Rápido & Rastreado',
       provider: 'Melhor Envio',
     },
   ];
 
-  if (isLocalSC) {
+  // Entrega Expressa por Motoboy para Grande São Paulo / Guarulhos
+  if (isLocalGuarulhosSP) {
     options.push({
       id: 'florishop-motoboy',
-      name: 'Entrega Expressa / Motoboy Local',
+      name: 'Motoboy Expresso (Guarulhos & Grande SP)',
       carrier: 'Florishop Express',
       carrierService: 'Florishop Express Motoboy',
-      price: 14.00,
+      price: 18.00,
       deadline: 'Até 24 horas (mesmo dia)',
+      isFree: false,
       tag: 'Entrega Rápida Local',
       provider: 'Local',
     });
   }
 
-  options.push({
-    id: 'florishop-retirada',
-    name: 'Retirada no Skatepark / Loja Física',
-    carrier: 'Florishop Skate',
-    carrierService: 'Retirada Presencial no Skatepark',
-    price: 0,
-    deadline: 'Disponível em até 2 horas',
-    isFree: true,
-    tag: 'Sem Custo de Envio',
-    provider: 'Local',
-  });
+  // Apenas opções com cobrança real (nenhuma opção gratuita)
+  const nonFreeOptions = options.filter((opt) => !opt.isFree && opt.price > 0);
 
   return {
     address,
-    options,
+    options: nonFreeOptions,
     source: 'melhor-envio-smart',
     provider: 'Melhor Envio',
   };

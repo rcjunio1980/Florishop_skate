@@ -161,51 +161,54 @@ export const AuthModal: React.FC = () => {
         </div>
 
         {/* Tab Selector */}
-        <div className="grid grid-cols-3 border-b border-[#2d2c2c] bg-[#141414] font-mono text-xs">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('login');
-              setErrorMessage('');
-            }}
-            className={`py-3 text-center border-b-2 font-bold transition-all uppercase tracking-wider ${
-              activeTab === 'login'
-                ? 'border-[#ff544b] text-[#ff544b] bg-[#201f1f]'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Entrar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('register');
-              setErrorMessage('');
-            }}
-            className={`py-3 text-center border-b-2 font-bold transition-all uppercase tracking-wider ${
-              activeTab === 'register'
-                ? 'border-[#ff544b] text-[#ff544b] bg-[#201f1f]'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Cadastrar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('admin-login');
-              setErrorMessage('');
-            }}
-            className={`py-3 text-center border-b-2 font-bold transition-all uppercase tracking-wider flex items-center justify-center gap-1.5 ${
-              activeTab === 'admin-login'
-                ? 'border-[#ff544b] text-[#ff544b] bg-[#201f1f]'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            <Lock className="w-3 h-3" />
-            Admin
-          </button>
-        </div>
+        {activeTab === 'admin-login' ? (
+          <div className="border-b border-[#2d2c2c] bg-[#141414] font-mono text-xs px-6 py-2.5 flex items-center justify-between">
+            <span className="text-[#ff544b] font-bold uppercase tracking-wider flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5" /> Acesso Exclusivo da Administração
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('login');
+                setErrorMessage('');
+              }}
+              className="text-gray-400 hover:text-white underline text-[11px]"
+            >
+              Voltar ao Login de Clientes
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 border-b border-[#2d2c2c] bg-[#141414] font-mono text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('login');
+                setErrorMessage('');
+              }}
+              className={`py-3 text-center border-b-2 font-bold transition-all uppercase tracking-wider ${
+                activeTab === 'login'
+                  ? 'border-[#ff544b] text-[#ff544b] bg-[#201f1f]'
+                  : 'border-transparent text-gray-400 hover:text-white'
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('register');
+                setErrorMessage('');
+              }}
+              className={`py-3 text-center border-b-2 font-bold transition-all uppercase tracking-wider ${
+                activeTab === 'register'
+                  ? 'border-[#ff544b] text-[#ff544b] bg-[#201f1f]'
+                  : 'border-transparent text-gray-400 hover:text-white'
+              }`}
+            >
+              Cadastrar
+            </button>
+          </div>
+        )}
 
         {/* Error / Success Feedback */}
         {errorMessage && (
@@ -508,7 +511,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="admin@florishop.com.br"
+                    placeholder="nome@empresa.com.br"
                     className="w-full bg-[#131313] border border-[#353534] rounded pl-10 pr-3 py-2.5 text-white placeholder-gray-600 focus:outline-none focus:border-[#ff544b]"
                   />
                 </div>

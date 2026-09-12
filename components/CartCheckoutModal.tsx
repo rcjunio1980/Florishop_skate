@@ -37,7 +37,8 @@ import {
   ShippingAddress,
   formatCep,
   cleanCep,
-  fetchAddressAndShipping
+  fetchAddressAndShipping,
+  SHIPPING_ORIGIN,
 } from '@/lib/shipping';
 
 export interface MaquininhaRate {
@@ -98,19 +99,20 @@ export const CartCheckoutModal: React.FC = () => {
   const [cepError, setCepError] = useState('');
   const [cepCalculated, setCepCalculated] = useState(false);
 
-  // Opções padrão calculadas via Melhor Envio (inicializadas com base no subtotal)
+  // Opções padrão calculadas via Melhor Envio (origem: Guarulhos/SP - Rua Joana 117, CEP 07135-040)
+  // Sem modalidade de frete grátis (desativado conforme solicitação)
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([
     {
       id: 'me-jadlog-package',
       name: 'Jadlog .Package (Melhor Envio)',
       carrier: 'Jadlog',
       carrierService: 'Melhor Envio - Jadlog .Package',
-      price: subtotal >= 250 ? 0 : 18.90,
-      originalPrice: subtotal >= 250 ? 18.90 : 27.50,
+      price: 19.80,
+      originalPrice: 28.50,
       discountPercent: 31,
       deadline: '3 a 6 dias úteis',
-      isFree: subtotal >= 250,
-      tag: subtotal >= 250 ? 'FRETE GRÁTIS' : 'Econômico Destaque',
+      isFree: false,
+      tag: 'Econômico Destaque',
       provider: 'Melhor Envio',
     },
     {
@@ -118,12 +120,12 @@ export const CartCheckoutModal: React.FC = () => {
       name: 'Correios PAC (Melhor Envio)',
       carrier: 'Correios',
       carrierService: 'Melhor Envio - Correios PAC',
-      price: subtotal >= 250 ? 0 : 22.90,
-      originalPrice: subtotal >= 250 ? 22.90 : 31.90,
+      price: 23.40,
+      originalPrice: 32.90,
       discountPercent: 28,
       deadline: '4 a 7 dias úteis',
-      isFree: subtotal >= 250,
-      tag: subtotal >= 250 ? 'FRETE GRÁTIS' : 'Econômico Oficial',
+      isFree: false,
+      tag: 'Econômico Oficial',
       provider: 'Melhor Envio',
     },
     {
@@ -131,10 +133,11 @@ export const CartCheckoutModal: React.FC = () => {
       name: 'Correios SEDEX (Melhor Envio)',
       carrier: 'Correios',
       carrierService: 'Melhor Envio - Correios SEDEX',
-      price: 36.90,
-      originalPrice: 54.00,
-      discountPercent: 32,
+      price: 34.50,
+      originalPrice: 49.00,
+      discountPercent: 30,
       deadline: '2 a 3 dias úteis',
+      isFree: false,
       tag: 'Mais Rápido / Expresso',
       provider: 'Melhor Envio',
     },
@@ -143,33 +146,13 @@ export const CartCheckoutModal: React.FC = () => {
       name: 'Loggi Express (Melhor Envio)',
       carrier: 'Loggi',
       carrierService: 'Melhor Envio - Loggi Express',
-      price: 24.50,
-      originalPrice: 34.00,
+      price: 22.80,
+      originalPrice: 32.00,
       discountPercent: 28,
       deadline: '2 a 4 dias úteis',
+      isFree: false,
       tag: 'Rápido & Rastreado',
       provider: 'Melhor Envio',
-    },
-    {
-      id: 'florishop-motoboy',
-      name: 'Entrega Expressa / Motoboy Local',
-      carrier: 'Florishop Express',
-      carrierService: 'Florishop Express Motoboy',
-      price: 14.00,
-      deadline: 'Até 24 horas (mesmo dia)',
-      tag: 'Entrega Local',
-      provider: 'Local',
-    },
-    {
-      id: 'florishop-retirada',
-      name: 'Retirada no Skatepark / Loja Física',
-      carrier: 'Florishop Skate',
-      carrierService: 'Retirada Presencial no Skatepark',
-      price: 0,
-      deadline: 'Disponível em até 2 horas',
-      isFree: true,
-      tag: 'Sem Custo de Envio',
-      provider: 'Local',
     },
   ]);
 
@@ -1014,6 +997,20 @@ export const CartCheckoutModal: React.FC = () => {
 
               {/* Bloco 2: Opções de Frete (Saber o Frete vs Colocar Frete Manual) */}
               <div className="pt-2 border-t border-[#2a2a2a] space-y-3">
+                {/* Banner de Endereço de Origem (Guarulhos) */}
+                <div className="bg-[#1b1a1a] border border-[#353534] rounded p-2.5 flex items-center justify-between gap-2 text-xs font-mono">
+                  <div className="flex items-center gap-2 text-gray-300">
+                    <MapPin className="w-4 h-4 text-[#ff544b] flex-shrink-0" />
+                    <div>
+                      <span className="text-gray-400 text-[10px] uppercase block">Endereço de Origem do Envio:</span>
+                      <strong className="text-white text-[11px]">{SHIPPING_ORIGIN.fullAddress}</strong>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-[#ff544b]/10 text-[#ff544b] border border-[#ff544b]/30 hidden sm:inline-block">
+                    Origem Fixa
+                  </span>
+                </div>
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Truck className="w-4 h-4 text-[#ff544b]" />
@@ -1024,8 +1021,8 @@ export const CartCheckoutModal: React.FC = () => {
                       Jadlog • Correios • Loggi
                     </span>
                   </div>
-                  <span className="font-mono text-[10px] text-emerald-400">
-                    {subtotal >= 250 ? '🎉 Frete Grátis ativado no PAC & Jadlog!' : 'Frete Grátis nas compras acima de R$ 250'}
+                  <span className="font-mono text-[10px] text-gray-400">
+                    Cálculo da origem até o CEP de destino
                   </span>
                 </div>
 
